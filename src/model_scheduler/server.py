@@ -23,7 +23,7 @@ from .policy import ModelPolicy
 from .quota import QuotaTracker
 from .router import ModelRouter, format_model_key
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 logger = logging.getLogger(__name__)
 
@@ -305,20 +305,14 @@ def make_handler(app: ProxyApp):
             elif path == "/v1/models":
                 self._handle_models()
             else:
-                self._send_json(
-                    404,
-                    {"error": {"message": "not found", "type": "model_scheduler.not_found"}},
-                )
+                self._send_error(404, "not found", "model_scheduler.not_found")
 
         def do_POST(self):
             path = urllib.parse.urlsplit(self.path).path
             if path == "/v1/chat/completions":
                 self._handle_chat()
             else:
-                self._send_json(
-                    404,
-                    {"error": {"message": "not found", "type": "model_scheduler.not_found"}},
-                )
+                self._send_error(404, "not found", "model_scheduler.not_found")
 
         def _handle_health(self):
             self._send_json(200, {"status": "ok", "version": __version__})
@@ -336,6 +330,29 @@ def make_handler(app: ProxyApp):
                     self.send_header(str(key), str(value))
             self.end_headers()
             self.wfile.write(raw)
+
+        def _send_error(self, status, message, error_type, **extra):
+            error = {"message": message, "type": error_type}
+            error.update(extra)
+            self._send_json(status, {"error": error})
+
+        def _send_upstream_unreachable(self, exc):
+            self._send_error(
+                502,
+                "upstream unreachable",
+                "model_scheduler.upstream_unreachable",
+                detail=str(exc),
+            )
+
+        def _send_upstream_response(self, status, upstream_headers, body, model_key):
+            content_type = _first_header(upstream_headers, "content-type") or "application/json"
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Model-Scheduler", model_key)
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
 
         def _read_body(self):
             try:
@@ -363,16 +380,10 @@ def make_handler(app: ProxyApp):
             try:
                 payload = json.loads(raw.decode("utf-8"))
             except Exception:
-                self._send_json(
-                    400,
-                    {"error": {"message": "invalid JSON body", "type": "model_scheduler.invalid_json"}},
-                )
+                self._send_error(400, "invalid JSON body", "model_scheduler.invalid_json")
                 return
             if not isinstance(payload, dict):
-                self._send_json(
-                    400,
-                    {"error": {"message": "request body must be a JSON object", "type": "model_scheduler.invalid_request"}},
-                )
+                self._send_error(400, "request body must be a JSON object", "model_scheduler.invalid_request")
                 return
 
             # 1. 提取 messages 文本，交给调度器做难度/紧急度评估。
@@ -381,25 +392,18 @@ def make_handler(app: ProxyApp):
                 decision = self.app.router.recommend_for_session(text)
             except Exception:
                 logger.exception("routing decision failed")
-                self._send_json(
-                    500,
-                    {"error": {"message": "routing decision failed", "type": "model_scheduler.routing_failed"}},
-                )
+                self._send_error(500, "routing decision failed", "model_scheduler.routing_failed")
                 return
 
             decision = dict(decision or {})
             model = str(decision.get("model") or "").strip()
             provider_name = str(decision.get("provider") or "").strip()
             if not model or not provider_name:
-                self._send_json(
+                self._send_error(
                     503,
-                    {
-                        "error": {
-                            "message": "no model available",
-                            "type": "model_scheduler.no_model",
-                            "reason": decision.get("reason", ""),
-                        }
-                    },
+                    "no model available",
+                    "model_scheduler.no_model",
+                    reason=decision.get("reason", ""),
                 )
                 return
 
@@ -408,28 +412,20 @@ def make_handler(app: ProxyApp):
             # 2. 读取 provider 配置；未配置则 503 且不转发。
             provider_cfg = self.app.policy.provider_config(provider_name)
             if not provider_cfg:
-                self._send_json(
+                self._send_error(
                     503,
-                    {
-                        "error": {
-                            "message": "provider not configured: " + provider_name,
-                            "type": "model_scheduler.provider_not_configured",
-                            "reason": decision.get("reason", ""),
-                        }
-                    },
+                    "provider not configured: " + provider_name,
+                    "model_scheduler.provider_not_configured",
+                    reason=decision.get("reason", ""),
                 )
                 return
             base_url = str(provider_cfg.get("base_url") or "").strip()
             if not base_url:
-                self._send_json(
+                self._send_error(
                     503,
-                    {
-                        "error": {
-                            "message": "provider base_url is empty: " + provider_name,
-                            "type": "model_scheduler.provider_not_configured",
-                            "reason": decision.get("reason", ""),
-                        }
-                    },
+                    "provider base_url is empty: " + provider_name,
+                    "model_scheduler.provider_not_configured",
+                    reason=decision.get("reason", ""),
                 )
                 return
 
@@ -455,16 +451,7 @@ def make_handler(app: ProxyApp):
             except Exception as exc:
                 logger.warning("upstream transport failed: %s", exc)
                 self.app.quota.record_failure(decision.get("model"), decision.get("provider"))
-                self._send_json(
-                    502,
-                    {
-                        "error": {
-                            "message": "upstream unreachable",
-                            "type": "model_scheduler.upstream_unreachable",
-                            "detail": str(exc),
-                        }
-                    },
-                )
+                self._send_upstream_unreachable(exc)
                 return
 
             upstream_body = _as_bytes(upstream_body)
@@ -475,14 +462,7 @@ def make_handler(app: ProxyApp):
             else:
                 self.app.quota.record_call(decision.get("model"), decision.get("provider"))
 
-            content_type = _first_header(upstream_headers, "content-type") or "application/json"
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(upstream_body)))
-            self.send_header("X-Model-Scheduler", decision.get("key", ""))
-            self.end_headers()
-            if upstream_body:
-                self.wfile.write(upstream_body)
+            self._send_upstream_response(status, upstream_headers, upstream_body, decision.get("key", ""))
 
         def _handle_chat_stream(self, url, headers, body, decision):
             try:
@@ -492,30 +472,14 @@ def make_handler(app: ProxyApp):
             except Exception as exc:
                 logger.warning("upstream stream open failed: %s", exc)
                 self.app.quota.record_failure(decision.get("model"), decision.get("provider"))
-                self._send_json(
-                    502,
-                    {
-                        "error": {
-                            "message": "upstream unreachable",
-                            "type": "model_scheduler.upstream_unreachable",
-                            "detail": str(exc),
-                        }
-                    },
-                )
+                self._send_upstream_unreachable(exc)
                 return
 
             if status >= 400:
                 # 上游在 SSE 开始前返回 4xx/5xx：保留状态码与错误 body。
                 self.app.quota.record_failure(decision.get("model"), decision.get("provider"))
                 error_body = _join_chunks(chunks)
-                content_type = _first_header(upstream_headers, "content-type") or "application/json"
-                self.send_response(status)
-                self.send_header("Content-Type", content_type)
-                self.send_header("Content-Length", str(len(error_body)))
-                self.send_header("X-Model-Scheduler", decision.get("key", ""))
-                self.end_headers()
-                if error_body:
-                    self.wfile.write(error_body)
+                self._send_upstream_response(status, upstream_headers, error_body, decision.get("key", ""))
                 return
 
             # 2xx：先记账，再开始 SSE 透传。
@@ -553,6 +517,7 @@ def make_handler(app: ProxyApp):
 
     Handler.app = app
     return Handler
+
 
 
 def create_server(host: str, port: int, app: ProxyApp) -> ThreadingHTTPServer:

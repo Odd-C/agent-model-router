@@ -364,27 +364,15 @@ def _normalise_session_id(session_id):
     return session_id
 
 
-def recommend_for_session(
-    session_text: str,
-    *,
-    message_count: int = 0,
-    session_id=None,
-    now=None,
-    quota_snapshot=None,
-    policy_store=None,
-) -> dict:
-    """会话创建/新消息前的推荐入口：组合难度、紧急度与路由决策。
-
-    session_id 为可选透传字段：传入非空会话标识时，结果末尾追加
-    "session_id" 字段；None / 空串 / 纯空白不追加。该字段不参与难度
-    评估、路由决策或配额判断。
-    """
+def _recommend_core(route_fn, session_text: str, *, message_count: int = 0, session_id=None,
+                    now=None, quota_snapshot=None, peak_policy_store=None) -> dict:
+    """评估难度/紧急度 -> 路由 -> 组装推荐结果（两个入口共享）。"""
     if now is None:
         now = datetime.now()
     text = str(session_text or "")
     difficulty = assess_difficulty(text)
     urgent = assess_urgency(text)
-    route = route_model(difficulty, urgent=urgent, now=now, quota_snapshot=quota_snapshot, policy_store=policy_store)
+    route = route_fn(difficulty, urgent=urgent, now=now, quota_snapshot=quota_snapshot)
     try:
         messages = max(0, int(message_count or 0))
     except (TypeError, ValueError):
@@ -393,7 +381,7 @@ def recommend_for_session(
         "difficulty": difficulty,
         "urgent": urgent,
         "message_count": messages,
-        "peak": _peak_for_route(route, now),
+        "peak": _peak_for_route(route, now, peak_policy_store),
         **route,
         "key": format_model_key(route.get("model"), route.get("provider")),
     }
@@ -401,6 +389,28 @@ def recommend_for_session(
     if sid is not None:
         result["session_id"] = sid
     return result
+
+
+def recommend_for_session(session_text: str, *, message_count: int = 0, session_id=None,
+                          now=None, quota_snapshot=None, policy_store=None) -> dict:
+    """会话创建/新消息前的推荐入口。
+
+    session_id 为非空时透传到结果末尾（None/空串/纯空白不追加），
+    不参与难度评估、路由决策或配额判断。
+    """
+    def route(difficulty, *, urgent, now, quota_snapshot):
+        return route_model(difficulty, urgent=urgent, now=now, quota_snapshot=quota_snapshot, policy_store=policy_store)
+
+    return _recommend_core(
+        route,
+        session_text,
+        message_count=message_count,
+        session_id=session_id,
+        now=now,
+        quota_snapshot=quota_snapshot,
+        peak_policy_store=None,
+    )
+
 
 
 def _peak_for_route(route: dict, now, policy_store=None) -> bool:
@@ -449,34 +459,10 @@ class ModelRouter:
             quota_tracker=self.quota,
         )
 
-    def recommend_for_session(
-        self,
-        session_text: str,
-        *,
-        message_count: int = 0,
-        session_id=None,
-        now=None,
-        quota_snapshot=None,
-    ) -> dict:
-        if now is None:
-            now = datetime.now()
-        text = str(session_text or "")
-        difficulty = assess_difficulty(text)
-        urgent = assess_urgency(text)
-        route = self.route_model(difficulty, urgent=urgent, now=now, quota_snapshot=quota_snapshot)
-        try:
-            messages = max(0, int(message_count or 0))
-        except (TypeError, ValueError):
-            messages = 0
-        result = {
-            "difficulty": difficulty,
-            "urgent": urgent,
-            "message_count": messages,
-            "peak": _peak_for_route(route, now, self.policy),
-            **route,
-            "key": format_model_key(route.get("model"), route.get("provider")),
-        }
-        sid = _normalise_session_id(session_id)
-        if sid is not None:
-            result["session_id"] = sid
-        return result
+    def recommend_for_session(self, session_text: str, *, message_count: int = 0,
+                              session_id=None, now=None, quota_snapshot=None) -> dict:
+        return _recommend_core(
+            self.route_model, session_text, message_count=message_count,
+            session_id=session_id, now=now, quota_snapshot=quota_snapshot,
+            peak_policy_store=self.policy,
+        )

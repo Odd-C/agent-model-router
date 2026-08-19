@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.2] - 2026-08-19
+
+### Changed
+- 内部重构（无行为变化）：合并 `recommend_for_session` 模块级函数与 `ModelRouter` 方法的重复实现（提取共享 `_recommend_core`）；精简 `make_handler`（提取 `_send_error` / `_send_upstream_unreachable` / `_send_upstream_response` 公共 helper）
+- 源码瘦身：`src/model_scheduler/` 2112 → 2063 行；公开 API 签名、返回形状、HTTP 行为完全不变（88 测试全过）
+
 ## [0.2.1] - 2026-08-19
 
 ### Added
