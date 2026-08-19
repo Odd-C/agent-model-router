@@ -48,7 +48,7 @@ DEFAULT_MODEL_POLICIES: dict[str, dict[str, Any]] = {
         "role": "stable",
         "fallback_chain": [],
         "scenarios": ["complex", "dsh"],
-        "label": "GPT-4o（付费旗舰）",
+        "label": "GPT-4o (paid flagship)",
     },
     "gpt-4o-mini@openai": {
         "id": "gpt-4o-mini",
@@ -60,7 +60,7 @@ DEFAULT_MODEL_POLICIES: dict[str, dict[str, Any]] = {
         "role": "paid-fallback",
         "fallback_chain": [],
         "scenarios": ["simple", "daily", "complex"],
-        "label": "GPT-4o mini（付费经济型）",
+        "label": "GPT-4o mini (paid economy)",
     },
     "deepseek-chat@deepseek": {
         "id": "deepseek-chat",
@@ -72,7 +72,7 @@ DEFAULT_MODEL_POLICIES: dict[str, dict[str, Any]] = {
         "role": "free-preview",
         "fallback_chain": ["gpt-4o@openai"],
         "scenarios": ["simple", "daily"],
-        "label": "DeepSeek Chat（免费预览）",
+        "label": "DeepSeek Chat (free preview)",
     },
     "gemini-2.0-flash@google": {
         "id": "gemini-2.0-flash",
@@ -87,7 +87,7 @@ DEFAULT_MODEL_POLICIES: dict[str, dict[str, Any]] = {
             "gpt-4o@openai",
         ],
         "scenarios": ["simple", "daily"],
-        "label": "Gemini 2.0 Flash（免费量大管饱）",
+        "label": "Gemini 2.0 Flash (free high-volume)",
     },
     "claude-3-5-sonnet@anthropic": {
         "id": "claude-3-5-sonnet",
@@ -100,7 +100,7 @@ DEFAULT_MODEL_POLICIES: dict[str, dict[str, Any]] = {
         "role": "free-flagship",
         "fallback_chain": ["gpt-4o-mini@openai"],
         "scenarios": ["complex", "daily"],
-        "label": "Claude 3.5 Sonnet（免费 S 级旗舰）",
+        "label": "Claude 3.5 Sonnet (free flagship)",
     },
 }
 
@@ -118,6 +118,7 @@ ROUTE_CHAINS: dict[str, list[str]] = {
 
 DEFAULT_ENABLED = True
 DEFAULT_SCHEDULE: list[dict[str, Any]] = []
+DEFAULT_LANGUAGE = "zh"
 
 # 峰谷时段（Asia/Shanghai，含边界）。可被 model-policy.json 的 peak_hours
 # 覆盖：如 [[8, 10], [20, 22]]；空数组 [] 表示无峰谷（全天平峰）。
@@ -420,7 +421,11 @@ class ModelPolicy:
 
         peak_hours = _normalise_peak_hours(raw_data.get("peak_hours"), DEFAULT_PEAK_HOURS)
 
-        return {"models": models, "schedule": schedule, "enabled": enabled, "peak_hours": peak_hours}
+        language = str(raw_data.get("language") or DEFAULT_LANGUAGE).strip().lower()
+        if language not in ("zh", "en"):
+            language = DEFAULT_LANGUAGE
+
+        return {"models": models, "schedule": schedule, "enabled": enabled, "peak_hours": peak_hours, "language": language}
 
     def list_models(self) -> list:
         """返回画像表全量列表（每个条目带 key）。"""
@@ -521,6 +526,14 @@ def _get_default_policy() -> ModelPolicy:
 
 def get_policy() -> dict:
     return _get_default_policy().get_policy()
+
+
+def get_language() -> str:
+    """当前全局语言（zh/en），从 model-policy.json 的 language 字段读取。"""
+    try:
+        return str(get_policy().get("language") or DEFAULT_LANGUAGE)
+    except Exception:
+        return DEFAULT_LANGUAGE
 
 
 def list_models() -> list:

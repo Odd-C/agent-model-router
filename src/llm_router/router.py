@@ -20,6 +20,65 @@ from . import policy, quota
 
 logger = logging.getLogger(__name__)
 
+# reason 文案 i18n 表（语言由 model-policy.json 的 language 字段控制，默认 zh）
+_TXT = {
+    "zh": {
+        "urgent": "紧急任务，能力优先",
+        "complex": "复杂任务",
+        "daily": "日常任务",
+        "simple": "简单任务",
+        "stable": "{label} 最稳",
+        "free_available": "{label} 可用",
+        "no_model": "无可选模型",
+        "fallback": "免费额度不足，回退 {label}",
+        "peak_double": "该模型高峰翻倍",
+        "global_peak_double": "官方高峰翻倍",
+        "off_peak": "谷值正常价兜底",
+    },
+    "en": {
+        "urgent": "Urgent, capability first",
+        "complex": "Complex task",
+        "daily": "Daily task",
+        "simple": "Simple task",
+        "stable": "{label} (most reliable)",
+        "free_available": "{label} available",
+        "no_model": "No model available",
+        "fallback": "Free quota exhausted, fallback to {label}",
+        "peak_double": "this model's peak price is doubled",
+        "global_peak_double": "official peak price doubled",
+        "off_peak": "off-peak normal price fallback",
+    },
+}
+
+
+def _lang(store=None) -> str:
+    """解析当前语言：优先 policy_store 的 language 配置，回退全局。"""
+    if store is not None:
+        try:
+            lang = str(store.get_policy().get("language") or "zh").strip().lower()
+            if lang in ("zh", "en"):
+                return lang
+        except Exception:
+            pass
+    try:
+        lang = str(policy.get_language()).strip().lower()
+        if lang in ("zh", "en"):
+            return lang
+    except Exception:
+        pass
+    return "zh"
+
+
+def _t(key: str, lang: str, **fmt) -> str:
+    """按语言取文案并格式化。"""
+    template = _TXT.get(lang, _TXT["zh"]).get(key, _TXT["zh"].get(key, key))
+    if fmt:
+        try:
+            return template.format(**fmt)
+        except (KeyError, IndexError):
+            return template
+    return template
+
 _CODE_BLOCK = "```"
 _ERROR_RE = re.compile(r"报错|error|exception|traceback|failed|崩溃|fail", re.IGNORECASE)
 _SOURCE_RE = re.compile(r"\.py|\.js|\.ts|源码|函数|class\b|def\b|import\b|接口")
@@ -148,16 +207,20 @@ def _entry_available(entry: dict, quota_snapshot, now, quota_tracker=None) -> bo
 
 
 def _paid_warning(now, base: str, store=None, model=None, provider=None) -> str:
-    """付费回退警告。按回退目标模型的峰谷时段判断（per-model > 全局 > 默认）。"""
+    """付费回退警告。按回退目标模型的峰谷时段判断（per-model > 全局 > 默认）。
+
+    base 是已按语言格式化的「免费额度不足，回退 {label}」前缀。
+    """
+    lang = _lang(store)
     if store is not None and model:
         try:
             if store.is_peak_hour_for(now, model_id=model, provider=provider):
-                return f"{base}，该模型高峰翻倍"
+                return f"{base}，{_t('peak_double', lang)}"
         except Exception:
             pass
     elif policy.is_peak_hour(now):
-        return f"{base}，官方高峰翻倍"
-    return f"{base}，谷值正常价兜底"
+        return f"{base}，{_t('global_peak_double', lang)}"
+    return f"{base}，{_t('off_peak', lang)}"
 
 
 def _route(
@@ -170,6 +233,7 @@ def _route(
     quota_tracker=None,
 ) -> dict:
     store = _policy_store(policy_store)
+    lang = _lang(store)
     if now is None:
         now = datetime.now()
     try:
@@ -181,16 +245,18 @@ def _route(
     # 决策链按 role 驱动（见 policy.ROUTE_CHAINS），与具体模型名解耦。
     if urgent:
         chain = policy.ROUTE_CHAINS.get("urgent", ["stable"])
-        chain_label = "紧急任务，能力优先"
+        chain_label = _t("urgent", lang)
     elif difficulty >= 4:
         chain = policy.ROUTE_CHAINS.get("complex", ["free-flagship"])
-        chain_label = "复杂任务"
+        chain_label = _t("complex", lang)
     elif 2 <= difficulty <= 3:
         chain = policy.ROUTE_CHAINS.get("daily", ["free-bulk"])
-        chain_label = "日常任务"
+        chain_label = _t("daily", lang)
     else:
         chain = policy.ROUTE_CHAINS.get("simple", ["free-bulk"])
-        chain_label = "简单任务"
+        chain_label = _t("simple", lang)
+
+    sep = "，" if lang == "zh" else ", "
 
     for role in chain:
         # 免费 role 先查免费模型；stable/paid-fallback 是付费兜底，免费/付费都允许
@@ -206,18 +272,22 @@ def _route(
             provider = str(entry.get("provider") or "").strip()
             label = str(entry.get("label") or f"{model}@{provider}")
             if role == "stable":
-                reason = f"{chain_label}，{label} 最稳"
+                reason = f"{chain_label}{sep}{_t('stable', lang, label=label)}"
             elif role == "paid-fallback":
-                reason = _paid_warning(now, f"{chain_label}，免费额度不足，回退 {label}", store, model, provider)
+                reason = _paid_warning(
+                    now,
+                    f"{chain_label}{sep}{_t('fallback', lang, label=label)}",
+                    store, model, provider,
+                )
             else:
-                reason = f"{chain_label}，{label} 可用"
+                reason = f"{chain_label}{sep}{_t('free_available', lang, label=label)}"
             return _build_result(model, provider, reason, store)
 
     # 兜底：连付费候选都没有时返回空结果（理论上不会到，chain 末尾必有付费）。
     return {
         "model": "",
         "provider": "",
-        "reason": f"{chain_label}，无可选模型",
+        "reason": f"{chain_label}{sep}{_t('no_model', lang)}",
         "tier": "",
         "cost": "paid",
     }

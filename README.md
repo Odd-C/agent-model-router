@@ -2,6 +2,10 @@
 
 [English](README.en.md) | [中文](README.md)
 
+**MIT License** · **Python 3.10+** · **Zero Dependencies** · **50 tests passing**
+
+---
+
 model-scheduler 是一个**智能模型调度器**：模型画像 + 免费额度跟踪 + 路由决策三件事，拆成零第三方依赖的纯 Python 标准库组件，任何 OpenAI 兼容 API 调用方都可以接入。
 
 ## 为什么做这个库
@@ -107,7 +111,7 @@ from llm_router import assess_difficulty, route_model
 text = "帮我写一个 Python 脚本"
 decision = route_model(assess_difficulty(text), urgent=False)
 print(decision)
-# {'model': 'claude-3-5-sonnet', 'provider': 'anthropic', 'reason': '复杂任务，Claude 3.5 Sonnet（免费 S 级旗舰） 可用', 'tier': 'S+', 'cost': 'free'}
+# {'model': 'claude-3-5-sonnet', 'provider': 'anthropic', 'reason': '复杂任务，Claude 3.5 Sonnet (free flagship) 可用', 'tier': 'S+', 'cost': 'free'}
 ```
 
 会话级推荐入口：
@@ -126,6 +130,10 @@ print(rec)
 ### 1. JSON 文件覆盖
 
 state 目录默认是 `~/.llm-router`，画像文件名为 `model-policy.json`。示例见 `examples/custom_policy.json`。合并规则：`models` 中每个键会与默认画像按 `id@provider` 合并，传入的非空字段覆盖默认值。
+
+语言配置：在 `model-policy.json` 加 `"language": "zh" | "en"`（默认 `zh`），
+路由决策的 `reason` 文案会按语言输出。画像里的 `label` 是展示名，默认英文，
+中文用户可自行覆盖为中文。
 
 ### 2. 环境变量
 

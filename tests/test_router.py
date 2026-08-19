@@ -181,6 +181,46 @@ class RouteDecisionTests(unittest.TestCase):
             self.assertEqual(result["model"], "gpt-4o-mini")
             self.assertIn("谷值", result["reason"])
 
+    def test_reason_language_en(self):
+        # model-policy.json 配 language: en → reason 输出英文
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from llm_router.policy import ModelPolicy
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            (state / "model-policy.json").write_text(
+                json.dumps({"language": "en"}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            store = ModelPolicy(state)
+            # 复杂任务：英文 reason
+            result = route_model(4, urgent=False, policy_store=store)
+            self.assertIn("Complex task", result["reason"])
+            self.assertNotIn("复杂任务", result["reason"])
+            # 紧急任务
+            result = route_model(0, urgent=True, policy_store=store)
+            self.assertIn("Urgent", result["reason"])
+            # 免费耗尽回退：英文 + 高峰翻倍
+            result = route_model(
+                2,
+                urgent=False,
+                now=datetime(2026, 1, 1, 10, 0),
+                quota_snapshot={
+                    "gemini-2.0-flash@google": 0,
+                    "deepseek-chat@deepseek": 0,
+                    "claude-3-5-sonnet@anthropic": 0,
+                },
+                policy_store=store,
+            )
+            self.assertIn("Free quota exhausted", result["reason"])
+            self.assertIn("peak", result["reason"])
+            # 会话级推荐 reason 也是英文
+            rec = recommend_for_session("帮我写一个 Python 脚本", policy_store=store)
+            self.assertIn("Complex task", rec["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()

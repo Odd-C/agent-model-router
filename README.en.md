@@ -2,6 +2,10 @@
 
 [English](README.en.md) | [中文](README.md)
 
+**MIT License** · **Python 3.10+** · **Zero Dependencies** · **50 tests passing**
+
+---
+
 **model-scheduler** is an intelligent model scheduler: model profiling + free-quota tracking + routing decisions, packaged as a zero-dependency pure-Python standard-library library. Any OpenAI-compatible API consumer can plug it in.
 
 ## Why this library
@@ -99,6 +103,10 @@ cd model-scheduler
 PYTHONPATH=src python
 ```
 
+> The default output language is Chinese (`zh`). To get English `reason` strings,
+> set `"language": "en"` in `model-policy.json` (see Configuration below).
+> The example output below shows English mode.
+
 Two lines to get going:
 
 ```python
@@ -107,7 +115,7 @@ from llm_router import assess_difficulty, route_model
 text = "帮我写一个 Python 脚本"
 decision = route_model(assess_difficulty(text), urgent=False)
 print(decision)
-# {'model': 'claude-3-5-sonnet', 'provider': 'anthropic', 'reason': '复杂任务，Claude 3.5 Sonnet（免费 S 级旗舰） 可用', 'tier': 'S+', 'cost': 'free'}
+# {'model': 'claude-3-5-sonnet', 'provider': 'anthropic', 'reason': 'Complex task, Claude 3.5 Sonnet (free flagship) available', 'tier': 'S+', 'cost': 'free'}
 ```
 
 Session-level recommendation entry:
@@ -126,6 +134,10 @@ Full example: `examples/quickstart.py`.
 ### 1. JSON file override
 
 Default state dir is `~/.llm-router`, profile file is `model-policy.json`. See `examples/custom_policy.json`. Merge rule: each key under `models` merges with the default profile by `id@provider`; non-empty fields in the override win.
+
+Language: set `"language": "zh" | "en"` in `model-policy.json` (default `zh`).
+The `reason` strings produced by routing follow this setting. The `label` field in
+the profile table is a display name (English by default; override per model if needed).
 
 ### 2. Environment variable
 
