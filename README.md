@@ -63,7 +63,20 @@ model-scheduler 是一个**智能模型调度器**：模型画像 + 免费额度
 - 高峰：北京时间 9:00-12:00、14:00-18:00（含边界，**默认**）
 - 谷值：其余时间
 - 时区：`Asia/Shanghai`（CST +0800）
-- **可自定义**：在 `model-policy.json` 配 `peak_hours` 字段覆盖，如 `[[8, 10], [20, 22]]`；`[]` 表示无峰谷（全天平峰）。也可以直接传参 `is_peak_hour(dt, peak_hours=[[8,10]])`。
+- **全局可自定义**：在 `model-policy.json` 配 `peak_hours` 字段覆盖，如 `[[8, 10], [20, 22]]`；`[]` 表示无峰谷（全天平峰）
+- **per-model 可自定义**：画像条目里加 `peak_hours` 字段，优先级 **模型级 > 全局 > 默认**：
+
+```json
+{
+  "models": {
+    "gemini-2.0-flash@google": { "peak_hours": [[22, 23]] },
+    "deepseek-chat@deepseek":  { "peak_hours": [] }
+  }
+}
+```
+
+上面的例子：gemini 的峰谷是 22-23 点；deepseek-chat 全天无峰谷；其他模型走全局配置。
+付费回退警告（reason 里的「高峰翻倍」）也按**回退目标模型**的峰谷判断，不是全局。
 
 ## 特性
 

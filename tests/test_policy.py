@@ -155,6 +155,41 @@ class ModelPolicyTests(unittest.TestCase):
         self.assertTrue(self.store.is_peak_hour(datetime(2026, 1, 1, 21, 0)))
         self.assertFalse(self.store.is_peak_hour(datetime(2026, 1, 1, 15, 0)))
 
+    def test_peak_hours_per_model_override(self):
+        # 模型级 peak_hours 覆盖：gemini 配了 [[22, 23]]，全局默认 9-12/14-18
+        override = {
+            "models": {
+                "gemini-2.0-flash@google": {"peak_hours": [[22, 23]]},
+            }
+        }
+        (self.state_dir / "model-policy.json").write_text(
+            json.dumps(override, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        # gemini 模型级：22-23 高峰，10 点不是（尽管全局 10 点是高峰）
+        self.assertTrue(self.store.is_peak_hour_for(datetime(2026, 1, 1, 22, 30), model_id="gemini-2.0-flash", provider="google"))
+        self.assertFalse(self.store.is_peak_hour_for(datetime(2026, 1, 1, 10, 0), model_id="gemini-2.0-flash", provider="google"))
+        # 未配置的模型（gpt-4o）走全局：10 点是高峰
+        self.assertTrue(self.store.is_peak_hour_for(datetime(2026, 1, 1, 10, 0), model_id="gpt-4o", provider="openai"))
+
+    def test_peak_hours_per_model_falls_back_to_global(self):
+        # 模型级配空数组 = 无峰谷；未配置模型走全局
+        override = {
+            "peak_hours": [[9, 12]],
+            "models": {
+                "gemini-2.0-flash@google": {"peak_hours": []},
+            }
+        }
+        (self.state_dir / "model-policy.json").write_text(
+            json.dumps(override, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        self.assertFalse(self.store.is_peak_hour_for(datetime(2026, 1, 1, 10, 0), model_id="gemini-2.0-flash", provider="google"))
+        self.assertTrue(self.store.is_peak_hour_for(datetime(2026, 1, 1, 10, 0), model_id="gpt-4o", provider="openai"))
+        # peak_hours_for 返回值
+        self.assertEqual(self.store.peak_hours_for("gemini-2.0-flash", "google"), [])
+        self.assertEqual(self.store.peak_hours_for("gpt-4o", "openai"), [[9, 12]])
+
     def test_default_state_dir_uses_env_var(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.dict(os.environ, {"LLM_ROUTER_STATE_DIR": tmp}):

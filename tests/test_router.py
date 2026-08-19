@@ -147,6 +147,40 @@ class RouteDecisionTests(unittest.TestCase):
         self.assertEqual(rec["key"], "claude-3-5-sonnet@anthropic")
         self.assertTrue(rec["peak"])
 
+    def test_paid_fallback_uses_target_model_peak_hours(self):
+        # 全局默认 9-12 高峰，但 gpt-4o-mini 配了 [[22, 23]] 峰谷：
+        # 上午 10 点回退到 gpt-4o-mini 时应判为「谷值」（目标模型自己不是高峰）
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from llm_router.policy import ModelPolicy
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            (state / "model-policy.json").write_text(
+                json.dumps({
+                    "models": {
+                        "gpt-4o-mini@openai": {"peak_hours": [[22, 23]]},
+                    }
+                }, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            store = ModelPolicy(state)
+            result = route_model(
+                2,
+                urgent=False,
+                now=datetime(2026, 1, 1, 10, 0),
+                quota_snapshot={
+                    "gemini-2.0-flash@google": 0,
+                    "deepseek-chat@deepseek": 0,
+                    "claude-3-5-sonnet@anthropic": 0,
+                },
+                policy_store=store,
+            )
+            self.assertEqual(result["model"], "gpt-4o-mini")
+            self.assertIn("谷值", result["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()

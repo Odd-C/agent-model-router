@@ -147,10 +147,17 @@ def _entry_available(entry: dict, quota_snapshot, now, quota_tracker=None) -> bo
     return _remaining(entry, quota_snapshot, _as_timestamp(now), quota_tracker) > 0
 
 
-def _paid_warning(now, base: str) -> str:
-    if policy.is_peak_hour(now):
+def _paid_warning(now, base: str, store=None, model=None, provider=None) -> str:
+    """付费回退警告。按回退目标模型的峰谷时段判断（per-model > 全局 > 默认）。"""
+    if store is not None and model:
+        try:
+            if store.is_peak_hour_for(now, model_id=model, provider=provider):
+                return f"{base}，该模型高峰翻倍"
+        except Exception:
+            pass
+    elif policy.is_peak_hour(now):
         return f"{base}，官方高峰翻倍"
-    return f"{base}，谷值官方正常价兜底"
+    return f"{base}，谷值正常价兜底"
 
 
 def _route(
@@ -201,7 +208,7 @@ def _route(
             if role == "stable":
                 reason = f"{chain_label}，{label} 最稳"
             elif role == "paid-fallback":
-                reason = _paid_warning(now, f"{chain_label}，免费额度不足，回退 {label}")
+                reason = _paid_warning(now, f"{chain_label}，免费额度不足，回退 {label}", store, model, provider)
             else:
                 reason = f"{chain_label}，{label} 可用"
             return _build_result(model, provider, reason, store)
@@ -216,11 +223,20 @@ def _route(
     }
 
 
-def route_model(difficulty: int, *, urgent: bool, now=None, quota_snapshot=None) -> dict:
-    """核心路由决策。quota_snapshot 可选：{id@provider: remaining}，缺省时实时查 quota。"""
+def route_model(difficulty: int, *, urgent: bool, now=None, quota_snapshot=None, policy_store=None) -> dict:
+    """核心路由决策。quota_snapshot 可选：{id@provider: remaining}，缺省时实时查 quota。
+
+    policy_store 可选：传入 ModelPolicy 实例（自定义 state 目录/画像），缺省用模块级默认。
+    """
     if now is None:
         now = datetime.now()
-    return _route(difficulty, urgent=urgent, now=now, quota_snapshot=quota_snapshot)
+    return _route(
+        difficulty,
+        urgent=urgent,
+        now=now,
+        quota_snapshot=quota_snapshot,
+        policy_store=policy_store,
+    )
 
 
 def recommend_for_session(
@@ -229,6 +245,7 @@ def recommend_for_session(
     message_count: int = 0,
     now=None,
     quota_snapshot=None,
+    policy_store=None,
 ) -> dict:
     """会话创建/新消息前的推荐入口：组合难度、紧急度与路由决策。"""
     if now is None:
@@ -236,7 +253,7 @@ def recommend_for_session(
     text = str(session_text or "")
     difficulty = assess_difficulty(text)
     urgent = assess_urgency(text)
-    route = route_model(difficulty, urgent=urgent, now=now, quota_snapshot=quota_snapshot)
+    route = route_model(difficulty, urgent=urgent, now=now, quota_snapshot=quota_snapshot, policy_store=policy_store)
     try:
         messages = max(0, int(message_count or 0))
     except (TypeError, ValueError):
@@ -245,10 +262,22 @@ def recommend_for_session(
         "difficulty": difficulty,
         "urgent": urgent,
         "message_count": messages,
-        "peak": policy.is_peak_hour(now),
+        "peak": _peak_for_route(route, now),
         **route,
         "key": format_model_key(route.get("model"), route.get("provider")),
     }
+
+
+def _peak_for_route(route: dict, now, policy_store=None) -> bool:
+    """按推荐结果中模型的峰谷时段判断当前是否高峰（无模型时回退全局判断）。"""
+    model = str(route.get("model") or "").strip()
+    if not model:
+        return policy.is_peak_hour(now)
+    store = _policy_store(policy_store)
+    try:
+        return bool(store.is_peak_hour_for(now, model_id=model, provider=route.get("provider")))
+    except Exception:
+        return policy.is_peak_hour(now)
 
 
 class ModelRouter:
@@ -307,7 +336,7 @@ class ModelRouter:
             "difficulty": difficulty,
             "urgent": urgent,
             "message_count": messages,
-            "peak": policy.is_peak_hour(now),
+            "peak": _peak_for_route(route, now, self.policy),
             **route,
             "key": format_model_key(route.get("model"), route.get("provider")),
         }

@@ -253,6 +253,14 @@ def _normalise_entry(key, item) -> dict | None:
     if isinstance(scenarios, str):
         scenarios = [scenarios]
     entry["scenarios"] = [str(s).strip() for s in scenarios if str(s).strip()]
+
+    # per-model 峰谷时段覆盖（优先级：模型级 > 全局 peak_hours > 默认）。
+    # 存 None = 未配置（走全局/默认）；存 [] = 显式无峰谷（全天平峰）。
+    raw_ph = entry.get("peak_hours")
+    if raw_ph is None:
+        entry["peak_hours"] = None
+    else:
+        entry["peak_hours"] = _normalise_peak_hours(raw_ph, [])
     return entry
 
 
@@ -314,12 +322,37 @@ class ModelPolicy:
         return self.state_dir / "model-policy.json"
 
     def is_peak_hour(self, dt=None) -> bool:
-        """按本实例配置的 peak_hours 判断峰谷（默认 9-12/14-18）。"""
+        """按本实例配置的全局 peak_hours 判断峰谷（默认 9-12/14-18）。"""
         try:
             periods = self.get_policy().get("peak_hours") or DEFAULT_PEAK_HOURS
         except Exception:
             periods = DEFAULT_PEAK_HOURS
         return is_peak_hour(dt, peak_hours=periods)
+
+    def peak_hours_for(self, model_id, provider=None) -> list:
+        """查询某模型的峰谷时段（per-model 覆盖 > 全局 > 默认）。
+
+        返回 [[start, end], ...]；空列表 = 无峰谷（全天平峰）。
+        """
+        entry = self.resolve_model(model_id, provider)
+        if entry:
+            ph = entry.get("peak_hours")
+            if ph is not None:
+                return [list(x) for x in ph]
+        try:
+            global_ph = self.get_policy().get("peak_hours")
+        except Exception:
+            global_ph = None
+        if global_ph:
+            return [list(x) for x in global_ph]
+        return [list(x) for x in DEFAULT_PEAK_HOURS]
+
+    def is_peak_hour_for(self, dt=None, model_id=None, provider=None) -> bool:
+        """按模型级/全局峰谷判断。model_id 给定时优先查该模型的 peak_hours。"""
+        if model_id is not None:
+            periods = self.peak_hours_for(model_id, provider)
+            return is_peak_hour(dt, peak_hours=periods)
+        return self.is_peak_hour(dt)
 
     def get_policy(self) -> dict:
         """返回合并后的策略：{"models": {key: entry}, "schedule": [...], "enabled": bool}。"""
@@ -500,6 +533,11 @@ def resolve_model(model_id, provider=None) -> dict | None:
 
 def find_by_role(role: str, cost: str | None = None) -> list:
     return _get_default_policy().find_by_role(role, cost)
+
+
+def is_peak_hour_for(dt=None, model_id=None, provider=None) -> bool:
+    """按模型级/全局峰谷判断（模块级便捷入口）。"""
+    return _get_default_policy().is_peak_hour_for(dt, model_id=model_id, provider=provider)
 
 
 def get_quota_table() -> dict:
