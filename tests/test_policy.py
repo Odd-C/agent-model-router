@@ -122,6 +122,39 @@ class ModelPolicyTests(unittest.TestCase):
         self.assertTrue(is_peak_hour(datetime(2026, 1, 1, 4, 0, tzinfo=timezone.utc)))   # 12:00
         self.assertFalse(is_peak_hour(datetime(2026, 1, 1, 5, 0, tzinfo=timezone.utc)))  # 13:00
 
+    def test_peak_hours_custom_periods(self):
+        # 自定义时段：8-10 高峰
+        custom = [[8, 10]]
+        self.assertTrue(is_peak_hour(datetime(2026, 1, 1, 8, 0), peak_hours=custom))
+        self.assertTrue(is_peak_hour(datetime(2026, 1, 1, 9, 30), peak_hours=custom))
+        self.assertTrue(is_peak_hour(datetime(2026, 1, 1, 10, 0), peak_hours=custom))
+        self.assertFalse(is_peak_hour(datetime(2026, 1, 1, 11, 0), peak_hours=custom))
+        # 多段自定义
+        multi = [[8, 10], [20, 22]]
+        self.assertTrue(is_peak_hour(datetime(2026, 1, 1, 21, 0), peak_hours=multi))
+        self.assertFalse(is_peak_hour(datetime(2026, 1, 1, 15, 0), peak_hours=multi))
+
+    def test_peak_hours_empty_means_no_peak(self):
+        self.assertFalse(is_peak_hour(datetime(2026, 1, 1, 10, 0), peak_hours=[]))
+        self.assertFalse(is_peak_hour(datetime(2026, 1, 1, 15, 0), peak_hours=[]))
+
+    def test_peak_hours_invalid_falls_back_to_default(self):
+        # 非法输入回退默认 9-12/14-18
+        self.assertTrue(is_peak_hour(datetime(2026, 1, 1, 10, 0), peak_hours="bad"))
+        self.assertFalse(is_peak_hour(datetime(2026, 1, 1, 13, 0), peak_hours=[[24, 25]]))
+
+    def test_peak_hours_json_override(self):
+        # model-policy.json 里配 peak_hours 覆盖默认
+        override = {"peak_hours": [[8, 10], [20, 22]]}
+        (self.state_dir / "model-policy.json").write_text(
+            json.dumps(override, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        self.assertEqual(self.store.get_policy()["peak_hours"], [[8, 10], [20, 22]])
+        # 实例方法按配置判断
+        self.assertTrue(self.store.is_peak_hour(datetime(2026, 1, 1, 21, 0)))
+        self.assertFalse(self.store.is_peak_hour(datetime(2026, 1, 1, 15, 0)))
+
     def test_default_state_dir_uses_env_var(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.dict(os.environ, {"LLM_ROUTER_STATE_DIR": tmp}):

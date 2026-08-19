@@ -119,6 +119,10 @@ ROUTE_CHAINS: dict[str, list[str]] = {
 DEFAULT_ENABLED = True
 DEFAULT_SCHEDULE: list[dict[str, Any]] = []
 
+# 峰谷时段（Asia/Shanghai，含边界）。可被 model-policy.json 的 peak_hours
+# 覆盖：如 [[8, 10], [20, 22]]；空数组 [] 表示无峰谷（全天平峰）。
+DEFAULT_PEAK_HOURS: list[list[int]] = [[9, 12], [14, 18]]
+
 _configured_state_dir: Path | None = None
 
 
@@ -252,11 +256,36 @@ def _normalise_entry(key, item) -> dict | None:
     return entry
 
 
-def is_peak_hour(dt=None) -> bool:
-    """峰谷判断：Asia/Shanghai 时间 9:00-12:00、14:00-18:00（含边界）。
+def _normalise_peak_hours(raw, default) -> list:
+    """规范化峰谷时段配置：[[start_hour, end_hour], ...]，含边界。
 
-    传入 naive datetime 时按 Asia/Shanghai 解释；传入 aware datetime 时会
-    转换到 Asia/Shanghai 后再判断。
+    非法输入回退默认；空列表 [] 表示无峰谷（全天平峰）。
+    """
+    if raw is None:
+        return [list(x) for x in default]
+    if not isinstance(raw, list):
+        return [list(x) for x in default]
+    out = []
+    for item in raw:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            continue
+        try:
+            start = int(item[0])
+            end = int(item[1])
+        except (TypeError, ValueError):
+            continue
+        if 0 <= start <= 23 and 0 <= end <= 23 and start <= end:
+            out.append([start, end])
+    return out
+
+
+def is_peak_hour(dt=None, peak_hours=None) -> bool:
+    """峰谷判断（Asia/Shanghai 时间，含边界）。
+
+    peak_hours 可传 [[start, end], ...] 自定义（如 [[8, 10], [20, 22]]），
+    默认使用 DEFAULT_PEAK_HOURS（9:00-12:00、14:00-18:00）。
+    传入 naive datetime 时按 Asia/Shanghai 解释；传入 aware datetime 时
+    会转换到 Asia/Shanghai 后再判断。
     """
     if dt is None:
         dt = datetime.now(_SHANGHAI_TZ)
@@ -267,8 +296,11 @@ def is_peak_hour(dt=None) -> bool:
             dt = dt.astimezone(_SHANGHAI_TZ)
         except Exception:
             pass
+    periods = _normalise_peak_hours(peak_hours, DEFAULT_PEAK_HOURS)
+    if not periods:
+        return False  # 空配置 = 无峰谷（全天平峰）
     hm = dt.hour * 60 + dt.minute
-    return (9 * 60 <= hm <= 12 * 60) or (14 * 60 <= hm <= 18 * 60)
+    return any(start * 60 <= hm <= end * 60 for start, end in periods)
 
 
 class ModelPolicy:
@@ -281,9 +313,13 @@ class ModelPolicy:
     def policy_path(self) -> Path:
         return self.state_dir / "model-policy.json"
 
-    @staticmethod
-    def is_peak_hour(dt=None) -> bool:
-        return is_peak_hour(dt)
+    def is_peak_hour(self, dt=None) -> bool:
+        """按本实例配置的 peak_hours 判断峰谷（默认 9-12/14-18）。"""
+        try:
+            periods = self.get_policy().get("peak_hours") or DEFAULT_PEAK_HOURS
+        except Exception:
+            periods = DEFAULT_PEAK_HOURS
+        return is_peak_hour(dt, peak_hours=periods)
 
     def get_policy(self) -> dict:
         """返回合并后的策略：{"models": {key: entry}, "schedule": [...], "enabled": bool}。"""
@@ -349,7 +385,9 @@ class ModelPolicy:
         if isinstance(raw_data.get("enabled"), bool):
             enabled = raw_data.get("enabled")
 
-        return {"models": models, "schedule": schedule, "enabled": enabled}
+        peak_hours = _normalise_peak_hours(raw_data.get("peak_hours"), DEFAULT_PEAK_HOURS)
+
+        return {"models": models, "schedule": schedule, "enabled": enabled, "peak_hours": peak_hours}
 
     def list_models(self) -> list:
         """返回画像表全量列表（每个条目带 key）。"""
