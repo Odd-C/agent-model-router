@@ -1,5 +1,7 @@
 # model-scheduler
 
+[English](README.en.md) | [中文](README.md)
+
 model-scheduler 是一个**智能模型调度器**：模型画像 + 免费额度跟踪 + 路由决策三件事，拆成零第三方依赖的纯 Python 标准库组件，任何 OpenAI 兼容 API 调用方都可以接入。
 
 ## 为什么做这个库
@@ -11,7 +13,7 @@ model-scheduler 是一个**智能模型调度器**：模型画像 + 免费额度
 - 同一个 `model id` 可能由不同 provider 提供（例如 `gpt-4o-mini@openai` vs `gemini-2.0-flash@google`）；
 - 复杂任务想用免费旗舰模型，但免费额度耗尽或限流时必须自动回退付费模型。
 
-如果每个调用方都自己写一套「选哪个模型」的判断逻辑，规则会散落、很难调参、也很难测试。llm-router 把决策规则固化下来，并支持画像表 JSON 覆盖，让模型调度策略可以持续调参。
+如果每个调用方都自己写一套「选哪个模型」的判断逻辑，规则会散落、很难调参、也很难测试。model-scheduler 把决策规则固化下来，并支持画像表 JSON 覆盖，让模型调度策略可以持续调参。
 
 ## 核心概念
 
@@ -105,7 +107,7 @@ from llm_router import assess_difficulty, route_model
 text = "帮我写一个 Python 脚本"
 decision = route_model(assess_difficulty(text), urgent=False)
 print(decision)
-# {'model': 'claude-3-5-sonnet', 'provider': 'anthropic', 'reason': '复杂任务，Claude 3.5 Sonnet（示例：免费 S 级旗舰） 可用', 'tier': 'S+', 'cost': 'free'}
+# {'model': 'claude-3-5-sonnet', 'provider': 'anthropic', 'reason': '复杂任务，Claude 3.5 Sonnet（免费 S 级旗舰） 可用', 'tier': 'S+', 'cost': 'free'}
 ```
 
 会话级推荐入口：
