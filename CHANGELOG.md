@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.1] - 2026-08-19
+
+### Added
+- `recommend_for_session` 新增 `session_id` 可选透传参数：模块级函数与 `ModelRouter.recommend_for_session` 方法签名同步支持；传入非空会话标识时结果末尾追加 `session_id` 字段，不参与难度评估/路由决策/配额判断
+- 新增 selector 格式转换 helper：`format_selector_key(model, provider)` / `parse_selector_key(value)`，用于 UI 选择器常见的 `provider/model` 格式与库内部 `id@provider` 唯一键格式之间的转换
+- README 新增「作为库接入（Integration）最佳实践」章节，覆盖可选依赖懒加载、启用开关单一权威、推荐结果应用、格式转换、失败冷却链路、推荐缓存等内容
+
+### Changed
+- 文档化 `policy.enabled` 字段语义：该字段为信息性字段，不参与路由 gate，启用/禁用由接入方自己的开关控制；`get_policy()` / `update_policy()` docstring 同步说明
+- 版本号统一为 0.2.1（`pyproject.toml` / `src/model_scheduler/__init__.py` / `src/model_scheduler/server.py` 三处一致）
+
+### Fixed
+- 无
+
 ## [0.2.0] - 2026-08-19
 
 ### Added

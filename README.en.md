@@ -2,7 +2,7 @@
 
 [English](README.en.md) | [中文](README.md)
 
-**MIT License** · **Python 3.10+** · **Zero Dependencies** · **50 tests passing**
+**MIT License** · **Python 3.10+** · **Zero Dependencies** · **88 tests passing**
 
 ---
 
@@ -123,7 +123,7 @@ Session-level recommendation entry:
 ```python
 from model_scheduler import recommend_for_session
 
-rec = recommend_for_session("帮我写一个 Python 脚本", message_count=3)
+rec = recommend_for_session("帮我写一个 Python 脚本", message_count=3, session_id="demo-session-1")
 print(rec)
 ```
 
@@ -137,8 +137,8 @@ Since v0.2.0, model-scheduler ships an **OpenAI-compatible proxy layer**: any Op
 pip install model-scheduler
 
 # Prepare config (model-policy.json must include a providers section)
-export OPENAI_API_KEY=sk-xxx
-export DEEPSEEK_API_KEY=sk-xxx
+export OPENAI_API_KEY=your-openai-api-key
+export DEEPSEEK_API_KEY=your-deepseek-api-key
 
 # Start the proxy (pure local process, zero external dependencies, no telemetry)
 model-scheduler serve --config model-policy.json --host 127.0.0.1 --port 8765
@@ -168,6 +168,159 @@ Proxy features:
 - Pure Python standard library (`http.server` + `urllib`), zero third-party dependencies
 
 **Deployment model**: the proxy is a pure local process — no external scheduler service or central node; decisions and state (quota, peak hours, cooldown) live in the library + local state files, no telemetry collected. You only need your own provider API keys and your own `model-policy.json` (the default profile is just a mechanism demo).
+
+## Decision rules
+
+`assess_difficulty(text)` is a pure-CPU rule scorer, range 0-5:
+
+- Code block ```` ``` ````: +2
+- Error words (报错/error/exception/traceback/failed/崩溃/fail): +2
+- Source references (`.py`/`.js`/`.ts`/源码/函数/class/def/import/接口): +1
+- Strong task intent (写代码/开发/重构/修 bug/debug etc.): +3
+- Weak intent words (代码/脚本/项目/bug/算法/模块/接口/前端/后端/数据库/部署/优化/重构/功能/系统/网站/应用/框架/demo/函数): +1
+- Text > 2000 chars: +1; > 8000 chars: +1
+- Clamped to `[0, 5]`
+
+`assess_urgency(text)` detects: 紧急|马上|尽快|asap|urgent|立刻.
+
+`route_model(difficulty, *, urgent, now=None, quota_snapshot=None)` returns:
+
+```json
+{"model": "...", "provider": "...", "reason": "...", "tier": "...", "cost": "..."}
+```
+
+`quota_snapshot` accepts `{"id@provider": remaining}`; when provided, decisions never touch real quota files — handy for tests and external integration.
+
+## Integration best practices (using as a library)
+
+> This section captures lessons learned from integrating model-scheduler into third-party applications (e.g. a web UI model picker). All examples use public generic model names and are directly runnable.
+
+### 1. Optional dependency: lazy import + graceful degradation
+
+When model-scheduler is an optional dependency, import it lazily and cache a miss flag so the host app never crashes when the library is not installed:
+
+```python
+try:
+    import model_scheduler as ms
+    _HAS_MODEL_SCHEDULER = True
+except Exception:
+    _HAS_MODEL_SCHEDULER = False
+    ms = None
+
+def get_recommendation(text, message_count=0, session_id=None):
+    if not _HAS_MODEL_SCHEDULER:
+        return None  # graceful degradation: caller keeps its own default behavior
+    return ms.recommend_for_session(
+        text,
+        message_count=message_count,
+        session_id=session_id,
+    )
+```
+
+### 2. Single source of truth for the enable switch
+
+The caller's own master switch is the only gate; the `enabled` field in the policy file is informational and never used by routing (`router._route` does not read it). Do not try to disable scheduling via the policy file's `enabled` field:
+
+```python
+import model_scheduler as ms
+
+SCHEDULER_ENABLED = True  # the caller's own master switch, the single authority
+
+def maybe_recommend(text, message_count=0, session_id=None):
+    if not SCHEDULER_ENABLED:
+        return None
+    return ms.recommend_for_session(text, message_count=message_count, session_id=session_id)
+```
+
+### 3. Applying recommendations
+
+`recommend_for_session(text, message_count=..., session_id=...)` returns:
+`difficulty` / `urgent` / `message_count` / `peak` / `model` / `provider` / `reason` / `tier` / `cost` / `key` (plus `session_id` when a non-empty session id is supplied).
+
+This library is an advisor, not a butler: whether to apply or display the recommendation is entirely the caller's decision.
+
+```python
+import model_scheduler as ms
+
+rec = ms.recommend_for_session(
+    "帮我写一个 Python 脚本",
+    message_count=3,
+    session_id="sess-123",
+)
+print(rec["model"], rec["provider"], rec["reason"], rec["key"])
+```
+
+### 4. Key formats: internal `id@provider` vs UI `provider/model`
+
+- Internal unique key: `id@provider` (also used for policy/quota/cooldown state-file keys) — `format_model_key` / `parse_model_key`
+- UI dropdown selector / external system value: `provider/model` — `format_selector_key` / `parse_selector_key`
+
+```python
+from model_scheduler import (
+    format_model_key,
+    parse_model_key,
+    format_selector_key,
+    parse_selector_key,
+)
+
+assert format_model_key("gpt-4o", "openai") == "gpt-4o@openai"
+assert parse_model_key("gpt-4o@openai") == ("gpt-4o", "openai")
+
+assert format_selector_key("gpt-4o", "openai") == "openai/gpt-4o"
+assert parse_selector_key("openai/gpt-4o") == ("gpt-4o", "openai")
+```
+
+### 5. Failure cooldown integration
+
+Call `record_failure(model, provider)` for real upstream provider failures (429 / quota exhausted / authentication failure, etc.). Free models then enter cooldown automatically (default 300s; `cooldown_seconds_left` can be checked) and routing skips them. Do **not** record non-model failures such as network disconnections or local timeouts:
+
+```python
+import model_scheduler as ms
+
+class UpstreamRateLimitError(Exception):
+    pass
+
+class NetworkError(Exception):
+    pass
+
+def call_model(model, provider):
+    # Replace with your actual upstream call
+    pass
+
+def call_with_cooldown(model, provider):
+    try:
+        call_model(model, provider)
+    except UpstreamRateLimitError:
+        ms.record_failure(model, provider)
+        raise
+    except NetworkError:
+        raise  # non-model failures are not recorded for cooldown
+```
+
+### 6. Recommendation cache
+
+If you cache recommendations before sending, the cache key must be isolated by session id + text; a 60s TTL is recommended:
+
+```python
+import time
+import model_scheduler as ms
+
+_cache = {}  # {(session_id, text): (expires_at, recommendation)}
+
+def cached_recommendation(text, session_id="", ttl=60):
+    key = (session_id or "", text)
+    now = time.time()
+    hit = _cache.get(key)
+    if hit and hit[0] > now:
+        return hit[1]
+    rec = ms.recommend_for_session(
+        text,
+        message_count=0,
+        session_id=session_id or None,
+    )
+    _cache[key] = (now + ttl, rec)
+    return rec
+```
 
 ## Configuration overrides (pick one)
 
@@ -202,28 +355,6 @@ router = ModelRouter(state_dir=state)
 from model_scheduler import configure_state_dir
 configure_state_dir("/tmp/llm-router-state")
 ```
-
-## Decision rules
-
-`assess_difficulty(text)` is a pure-CPU rule scorer, range 0-5:
-
-- Code block ```` ``` ````: +2
-- Error words (报错/error/exception/traceback/failed/崩溃/fail): +2
-- Source references (`.py`/`.js`/`.ts`/源码/函数/class/def/import/接口): +1
-- Strong task intent (写代码/开发/重构/修 bug/debug etc.): +3
-- Weak intent words (代码/脚本/项目/bug/算法/模块/接口/前端/后端/数据库/部署/优化/重构/功能/系统/网站/应用/框架/demo/函数): +1
-- Text > 2000 chars: +1; > 8000 chars: +1
-- Clamped to `[0, 5]`
-
-`assess_urgency(text)` detects: 紧急|马上|尽快|asap|urgent|立刻.
-
-`route_model(difficulty, *, urgent, now=None, quota_snapshot=None)` returns:
-
-```json
-{"model": "...", "provider": "...", "reason": "...", "tier": "...", "cost": "..."}
-```
-
-`quota_snapshot` accepts `{"id@provider": remaining}`; when provided, decisions never touch real quota files — handy for tests and external integration.
 
 ## Running tests
 

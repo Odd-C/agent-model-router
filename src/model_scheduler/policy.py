@@ -385,7 +385,12 @@ class ModelPolicy:
         return self.is_peak_hour(dt)
 
     def get_policy(self) -> dict:
-        """返回合并后的策略：{"models": {key: entry}, "schedule": [...], "enabled": bool}。"""
+        """返回合并后的策略：{"models": {key: entry}, "schedule": [...], "enabled": bool, ...}。
+
+        `enabled` 是信息性字段：`get_policy()` 会返回它、`update_policy()` 会持久化它，
+        但路由决策（router._route）从不读取它。启用/禁用调度由接入方自己的开关控制；
+        只要调用本库 API，就会按画像/额度/冷却执行路由。
+        """
         models = {k: dict(v) for k, v in DEFAULT_MODEL_POLICIES.items()}
         schedule = list(DEFAULT_SCHEDULE)
         enabled = DEFAULT_ENABLED
@@ -547,7 +552,11 @@ class ModelPolicy:
         return out
 
     def update_policy(self, updates: dict) -> dict:
-        """更新 model-policy.json（schedule/enabled/models/可调参数），原子写盘。"""
+        """更新 model-policy.json（schedule/enabled/models/可调参数），原子写盘。
+
+        `enabled` 仅作为信息性字段写入文件，供接入方自己的开关读取；
+        本库路由决策（router._route）不读取它，传入 `enabled` 不会改变任何路由行为。
+        """
         if not isinstance(updates, dict):
             raise ValueError("policy updates must be a dict")
         path = self.policy_path

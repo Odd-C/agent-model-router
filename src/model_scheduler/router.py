@@ -141,6 +141,44 @@ def parse_model_key(key) -> tuple:
     return key, ""
 
 
+def format_selector_key(model, provider) -> str:
+    """Format a model selector key as `provider/model`.
+
+    This is the value shape commonly used by UI model pickers and external
+    systems (for example `openai/gpt-4o`). It is intentionally separate from
+    `format_model_key`, which returns the library's internal unique key
+    `id@provider` used for policy/quota/cooldown state-file keys.
+
+    Returns the bare model id when `provider` is empty, and `""` when
+    `model` is empty. A model id containing `/` only round-trips when
+    `provider` is non-empty (the usual `provider/model` convention).
+    """
+    model = str(model or "").strip()
+    provider = str(provider or "").strip()
+    if not model:
+        return ""
+    return f"{provider}/{model}" if provider else model
+
+
+def parse_selector_key(value) -> tuple:
+    """Parse a `provider/model` selector value into `(model, provider)`.
+
+    Values without `/` are treated as bare model ids with an empty provider.
+    Empty input returns `("", "")`. This helper does not process the
+    library's internal `id@provider` format (use `format_model_key` /
+    `parse_model_key`) or the legacy `@provider:model` form accepted by
+    `quota._normalise_model`; callers must use the matching codec for each
+    key shape.
+    """
+    value = str(value or "").strip()
+    if not value:
+        return "", ""
+    if "/" in value:
+        provider, model = value.split("/", 1)
+        return model.strip(), provider.strip()
+    return value, ""
+
+
 def _policy_store(policy_store=None):
     return policy_store if policy_store is not None else policy
 
@@ -309,15 +347,38 @@ def route_model(difficulty: int, *, urgent: bool, now=None, quota_snapshot=None,
     )
 
 
+def _normalise_session_id(session_id):
+    """Return a non-empty session id for result passthrough, or None.
+
+    session_id is an opaque caller-provided correlation value: when non-empty,
+    it is appended to the recommendation result for log association / cache
+    keys. It is never used by difficulty assessment, routing, or quota
+    decisions.
+    """
+    if session_id is None:
+        return None
+    if isinstance(session_id, str):
+        session_id = session_id.strip()
+    if session_id == "":
+        return None
+    return session_id
+
+
 def recommend_for_session(
     session_text: str,
     *,
     message_count: int = 0,
+    session_id=None,
     now=None,
     quota_snapshot=None,
     policy_store=None,
 ) -> dict:
-    """会话创建/新消息前的推荐入口：组合难度、紧急度与路由决策。"""
+    """会话创建/新消息前的推荐入口：组合难度、紧急度与路由决策。
+
+    session_id 为可选透传字段：传入非空会话标识时，结果末尾追加
+    "session_id" 字段；None / 空串 / 纯空白不追加。该字段不参与难度
+    评估、路由决策或配额判断。
+    """
     if now is None:
         now = datetime.now()
     text = str(session_text or "")
@@ -328,7 +389,7 @@ def recommend_for_session(
         messages = max(0, int(message_count or 0))
     except (TypeError, ValueError):
         messages = 0
-    return {
+    result = {
         "difficulty": difficulty,
         "urgent": urgent,
         "message_count": messages,
@@ -336,6 +397,10 @@ def recommend_for_session(
         **route,
         "key": format_model_key(route.get("model"), route.get("provider")),
     }
+    sid = _normalise_session_id(session_id)
+    if sid is not None:
+        result["session_id"] = sid
+    return result
 
 
 def _peak_for_route(route: dict, now, policy_store=None) -> bool:
@@ -389,6 +454,7 @@ class ModelRouter:
         session_text: str,
         *,
         message_count: int = 0,
+        session_id=None,
         now=None,
         quota_snapshot=None,
     ) -> dict:
@@ -402,7 +468,7 @@ class ModelRouter:
             messages = max(0, int(message_count or 0))
         except (TypeError, ValueError):
             messages = 0
-        return {
+        result = {
             "difficulty": difficulty,
             "urgent": urgent,
             "message_count": messages,
@@ -410,3 +476,7 @@ class ModelRouter:
             **route,
             "key": format_model_key(route.get("model"), route.get("provider")),
         }
+        sid = _normalise_session_id(session_id)
+        if sid is not None:
+            result["session_id"] = sid
+        return result

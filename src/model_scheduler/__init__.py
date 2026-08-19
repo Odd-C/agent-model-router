@@ -34,12 +34,14 @@ from .router import (
     assess_difficulty,
     assess_urgency,
     format_model_key,
+    format_selector_key,
     parse_model_key,
+    parse_selector_key,
     recommend_for_session,
     route_model,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __all__ = [
     "ModelPolicy",
@@ -50,7 +52,9 @@ __all__ = [
     "route_model",
     "recommend_for_session",
     "format_model_key",
+    "format_selector_key",
     "parse_model_key",
+    "parse_selector_key",
     "get_policy",
     "list_models",
     "resolve_model",

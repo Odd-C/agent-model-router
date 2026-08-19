@@ -2,7 +2,7 @@
 
 [English](README.en.md) | [中文](README.md)
 
-**MIT License** · **Python 3.10+** · **Zero Dependencies** · **50 tests passing**
+**MIT License** · **Python 3.10+** · **Zero Dependencies** · **88 tests passing**
 
 ---
 
@@ -119,7 +119,7 @@ print(decision)
 ```python
 from model_scheduler import recommend_for_session
 
-rec = recommend_for_session("帮我写一个 Python 脚本", message_count=3)
+rec = recommend_for_session("帮我写一个 Python 脚本", message_count=3, session_id="demo-session-1")
 print(rec)
 ```
 
@@ -133,8 +133,8 @@ v0.2.0 起内置 **OpenAI 兼容代理层**：任何 OpenAI 兼容客户端（He
 pip install model-scheduler
 
 # 准备配置（model-policy.json，需含 providers 段）
-export OPENAI_API_KEY=sk-xxx
-export DEEPSEEK_API_KEY=sk-xxx
+export OPENAI_API_KEY=your-openai-api-key
+export DEEPSEEK_API_KEY=your-deepseek-api-key
 
 # 启动代理（纯本地进程，零外部依赖，不收集遥测）
 model-scheduler serve --config model-policy.json --host 127.0.0.1 --port 8765
@@ -164,6 +164,159 @@ resp = client.chat.completions.create(model="auto", messages=[{"role": "user", "
 - 纯 Python 标准库实现（`http.server` + `urllib`），零第三方依赖
 
 **部署形态**：代理是纯本地进程，不依赖任何外部调度服务/中心节点；决策与状态（额度、峰谷、冷却）全部在库内 + 本地状态文件，不收集遥测。用户只需自备 provider 的 API key 和自己的 `model-policy.json`（默认画像仅为机制演示）。
+
+## 决策规则说明
+
+`assess_difficulty(text)` 是纯 CPU 规则打分，范围 0-5：
+
+- 代码块 ```` ``` ````：+2
+- 报错词（报错/error/exception/traceback/failed/崩溃/fail）：+2
+- 源码引用（`.py`/`.js`/`.ts`/源码/函数/class/def/import/接口）：+1
+- 强任务意图（写代码/开发/重构/修 bug/debug 等）：+3
+- 弱意图词（代码/脚本/项目/bug/算法/模块/接口/前端/后端/数据库/部署/优化/重构/功能/系统/网站/应用/框架/demo/函数）：+1
+- 文本 > 2000 字符：+1；> 8000 字符：+1
+- 最终 clamp 到 `[0, 5]`
+
+`assess_urgency(text)` 识别：紧急|马上|尽快|asap|urgent|立刻。
+
+`route_model(difficulty, *, urgent, now=None, quota_snapshot=None)` 返回：
+
+```json
+{"model": "...", "provider": "...", "reason": "...", "tier": "...", "cost": "..."}
+```
+
+`quota_snapshot` 可传 `{"id@provider": remaining}`，传了之后决策不碰真实额度文件，便于测试和外部系统集成。
+
+## 作为库接入（Integration）最佳实践
+
+> 本节来自上游第三方应用（如 WebUI 模型选择器）接入 model-scheduler 的实测经验。所有示例均使用公开通用模型名，可直接运行。
+
+### 1. 可选依赖接入：懒加载 + 优雅降级
+
+把本库作为可选依赖时，应懒加载并在未安装时缓存 miss 标志，保证宿主应用不崩溃：
+
+```python
+try:
+    import model_scheduler as ms
+    _HAS_MODEL_SCHEDULER = True
+except Exception:
+    _HAS_MODEL_SCHEDULER = False
+    ms = None
+
+def get_recommendation(text, message_count=0, session_id=None):
+    if not _HAS_MODEL_SCHEDULER:
+        return None  # 未安装本库时优雅降级，由宿主应用自行兜底
+    return ms.recommend_for_session(
+        text,
+        message_count=message_count,
+        session_id=session_id,
+    )
+```
+
+### 2. 启用开关：单一权威
+
+接入方自己的总开关是唯一 gate；库 policy 文件里的 `enabled` 字段仅信息性，不参与路由决策（`router._route` 从不读它）。不要在 policy 文件里试图用 `enabled` 关闭调度：
+
+```python
+import model_scheduler as ms
+
+SCHEDULER_ENABLED = True  # 接入方自己的总开关，唯一权威 gate
+
+def maybe_recommend(text, message_count=0, session_id=None):
+    if not SCHEDULER_ENABLED:
+        return None
+    return ms.recommend_for_session(text, message_count=message_count, session_id=session_id)
+```
+
+### 3. 推荐结果应用
+
+`recommend_for_session(text, message_count=..., session_id=...)` 返回字段：
+`difficulty` / `urgent` / `message_count` / `peak` / `model` / `provider` / `reason` / `tier` / `cost` / `key`（传入非空 `session_id` 时额外追加 `session_id`）。
+
+本库定位是顾问：结果是否采用、是否展示给用户，由接入方决定。
+
+```python
+import model_scheduler as ms
+
+rec = ms.recommend_for_session(
+    "帮我写一个 Python 脚本",
+    message_count=3,
+    session_id="sess-123",
+)
+print(rec["model"], rec["provider"], rec["reason"], rec["key"])
+```
+
+### 4. 格式转换：内部 `id@provider` 与 UI `provider/model`
+
+- 库内部唯一键：`id@provider`（画像/额度/冷却状态文件 key 也用它）—— `format_model_key` / `parse_model_key`
+- UI 下拉选择器/外部系统常用：`provider/model` —— `format_selector_key` / `parse_selector_key`
+
+```python
+from model_scheduler import (
+    format_model_key,
+    parse_model_key,
+    format_selector_key,
+    parse_selector_key,
+)
+
+assert format_model_key("gpt-4o", "openai") == "gpt-4o@openai"
+assert parse_model_key("gpt-4o@openai") == ("gpt-4o", "openai")
+
+assert format_selector_key("gpt-4o", "openai") == "openai/gpt-4o"
+assert parse_selector_key("openai/gpt-4o") == ("gpt-4o", "openai")
+```
+
+### 5. 失败冷却链路
+
+上游真实 provider 失败（429 / quota 耗尽 / 鉴权失败等）时调用 `record_failure(model, provider)`，免费模型会自动进入冷却（默认 300s，`cooldown_seconds_left` 可查），路由期间自动绕过。网络断线、本地超时等非模型失败**不要**记录：
+
+```python
+import model_scheduler as ms
+
+class UpstreamRateLimitError(Exception):
+    pass
+
+class NetworkError(Exception):
+    pass
+
+def call_model(model, provider):
+    # 实际项目中替换为你的上游调用
+    pass
+
+def call_with_cooldown(model, provider):
+    try:
+        call_model(model, provider)
+    except UpstreamRateLimitError:
+        ms.record_failure(model, provider)
+        raise
+    except NetworkError:
+        raise  # 网络断线等非模型失败不记录冷却
+```
+
+### 6. 推荐缓存
+
+若接入方做发送前推荐缓存，缓存键必须按 会话ID + 文本 隔离；TTL 建议 60 秒：
+
+```python
+import time
+import model_scheduler as ms
+
+_cache = {}  # {(session_id, text): (expires_at, recommendation)}
+
+def cached_recommendation(text, session_id="", ttl=60):
+    key = (session_id or "", text)
+    now = time.time()
+    hit = _cache.get(key)
+    if hit and hit[0] > now:
+        return hit[1]
+    rec = ms.recommend_for_session(
+        text,
+        message_count=0,
+        session_id=session_id or None,
+    )
+    _cache[key] = (now + ttl, rec)
+    return rec
+```
 
 ## 配置覆盖方式（三选一）
 
@@ -198,28 +351,6 @@ router = ModelRouter(state_dir=state)
 from model_scheduler import configure_state_dir
 configure_state_dir("/tmp/llm-router-state")
 ```
-
-## 决策规则说明
-
-`assess_difficulty(text)` 是纯 CPU 规则打分，范围 0-5：
-
-- 代码块 ```` ``` ````：+2
-- 报错词（报错/error/exception/traceback/failed/崩溃/fail）：+2
-- 源码引用（`.py`/`.js`/`.ts`/源码/函数/class/def/import/接口）：+1
-- 强任务意图（写代码/开发/重构/修 bug/debug 等）：+3
-- 弱意图词（代码/脚本/项目/bug/算法/模块/接口/前端/后端/数据库/部署/优化/重构/功能/系统/网站/应用/框架/demo/函数）：+1
-- 文本 > 2000 字符：+1；> 8000 字符：+1
-- 最终 clamp 到 `[0, 5]`
-
-`assess_urgency(text)` 识别：紧急|马上|尽快|asap|urgent|立刻。
-
-`route_model(difficulty, *, urgent, now=None, quota_snapshot=None)` 返回：
-
-```json
-{"model": "...", "provider": "...", "reason": "...", "tier": "...", "cost": "..."}
-```
-
-`quota_snapshot` 可传 `{"id@provider": remaining}`，传了之后决策不碰真实额度文件，便于测试和外部系统集成。
 
 ## 测试运行方式
 
