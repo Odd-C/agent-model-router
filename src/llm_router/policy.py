@@ -1,0 +1,472 @@
+"""llm_router.policy — 模型画像表。
+
+职责：
+  1. 内置通用示例模型画像（能力档、付费/免费、5h 窗口配额、
+     峰谷可用性、场景标签、降级链、路由角色）。
+  2. 支持从 state 目录下的 model-policy.json 覆盖默认画像。
+  3. 提供峰谷判断 is_peak_hour()（Asia/Shanghai 本地时间 9:00-12:00、
+     14:00-18:00，含边界）。
+
+所有读写均使用可参数化的 state 目录；import 本模块不会创建任何目录或文件。
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import tempfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# 5 小时滑动窗口（秒）。
+QUOTA_WINDOW_SECONDS = 5 * 3600
+
+try:
+    from zoneinfo import ZoneInfo
+
+    _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+except Exception:  # pragma: no cover - 无 IANA tz 数据时的保守回退
+    _SHANGHAI_TZ = timezone(timedelta(hours=8))
+
+# 模型 key 一律用 id@provider，避免同名模型多 provider 冲突。
+# role 字段：stable（付费最稳，紧急兜底）/ free-flagship（免费旗舰，复杂任务）/
+#           free-bulk（免费量大，日常主力）/ free-preview（免费预览，日常兜底）/
+#           paid-fallback（付费兜底）
+# ⚠️ 以下默认画像仅为「通用示例」，演示机制用。请按你的真实模型/额度修改
+#    model-policy.json 覆盖，或直接改这份默认值。
+DEFAULT_MODEL_POLICIES: dict[str, dict[str, Any]] = {
+    "gpt-4o@openai": {
+        "id": "gpt-4o",
+        "provider": "openai",
+        "tier": "S",
+        "cost": "paid",
+        "quota_per_window": None,
+        "peak_safe": True,
+        "role": "stable",
+        "fallback_chain": [],
+        "scenarios": ["complex", "dsh"],
+        "label": "GPT-4o（付费旗舰）",
+    },
+    "gpt-4o-mini@openai": {
+        "id": "gpt-4o-mini",
+        "provider": "openai",
+        "tier": "A",
+        "cost": "paid",
+        "quota_per_window": None,
+        "peak_safe": True,
+        "role": "paid-fallback",
+        "fallback_chain": [],
+        "scenarios": ["simple", "daily", "complex"],
+        "label": "GPT-4o mini（付费经济型）",
+    },
+    "deepseek-chat@deepseek": {
+        "id": "deepseek-chat",
+        "provider": "deepseek",
+        "tier": "A-",
+        "cost": "free",
+        "quota_per_window": 500,
+        "peak_safe": True,
+        "role": "free-preview",
+        "fallback_chain": ["gpt-4o@openai"],
+        "scenarios": ["simple", "daily"],
+        "label": "DeepSeek Chat（免费预览）",
+    },
+    "gemini-2.0-flash@google": {
+        "id": "gemini-2.0-flash",
+        "provider": "google",
+        "tier": "B+",
+        "cost": "free",
+        "quota_per_window": 1500,
+        "peak_safe": True,
+        "role": "free-bulk",
+        "fallback_chain": [
+            "deepseek-chat@deepseek",
+            "gpt-4o@openai",
+        ],
+        "scenarios": ["simple", "daily"],
+        "label": "Gemini 2.0 Flash（免费量大管饱）",
+    },
+    "claude-3-5-sonnet@anthropic": {
+        "id": "claude-3-5-sonnet",
+        "provider": "anthropic",
+        "tier": "S+",
+        "cost": "free",
+        "quota_per_window": 500,
+        "peak_safe": True,
+        # 限流/额度不足时降级付费经济型
+        "role": "free-flagship",
+        "fallback_chain": ["gpt-4o-mini@openai"],
+        "scenarios": ["complex", "daily"],
+        "label": "Claude 3.5 Sonnet（免费 S 级旗舰）",
+    },
+}
+
+# 决策链（按 role 驱动，与具体模型名解耦）。每条链按优先级排列。
+#   urgent_chain：紧急任务（能力优先，最稳付费模型）
+#   complex_chain：难度 >=4（免费旗舰优先，额度不足降级付费）
+#   daily_chain：难度 2-3（免费量大 → 免费预览 → 免费旗舰 → 付费兜底）
+#   simple_chain：难度 0-1（免费量大 → 免费预览 → 付费兜底）
+ROUTE_CHAINS: dict[str, list[str]] = {
+    "urgent": ["stable", "paid-fallback"],
+    "complex": ["free-flagship", "paid-fallback"],
+    "daily": ["free-bulk", "free-preview", "free-flagship", "paid-fallback"],
+    "simple": ["free-bulk", "free-preview", "paid-fallback"],
+}
+
+DEFAULT_ENABLED = True
+DEFAULT_SCHEDULE: list[dict[str, Any]] = []
+
+_configured_state_dir: Path | None = None
+
+
+def configure_state_dir(path: str | Path | None) -> Path:
+    """配置模块级默认 state 目录；传 None 表示恢复环境变量/默认值。"""
+    global _configured_state_dir
+    if path is None:
+        _configured_state_dir = None
+    else:
+        _configured_state_dir = Path(path).expanduser()
+    return default_state_dir()
+
+
+def default_state_dir() -> Path:
+    """返回 state 目录（不创建）：环境变量 > configure_state_dir > ~/.llm-router。"""
+    if _configured_state_dir is not None:
+        return _configured_state_dir
+    env = os.getenv("LLM_ROUTER_STATE_DIR", "").strip()
+    if env:
+        return Path(env).expanduser()
+    return Path.home() / ".llm-router"
+
+
+def get_state_dir() -> Path:
+    """返回 state 目录并确保其存在（首次调用才会创建）。"""
+    d = default_state_dir()
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        logger.warning("llm-router state dir unavailable: %s", d)
+    return d
+
+
+def get_policy_path() -> Path:
+    return default_state_dir() / "model-policy.json"
+
+
+def atomic_write_json(path, data) -> None:
+    """原子写 JSON：同目录 tmp + fsync + os.replace。"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    f = None
+    try:
+        f = os.fdopen(fd, "w", encoding="utf-8")
+        with f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        if f is not None:
+            try:
+                f.close()
+            except Exception:
+                pass
+        else:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _split_key(key) -> tuple:
+    key = str(key or "").strip()
+    if not key:
+        return "", ""
+    if "@" in key:
+        model, provider = key.split("@", 1)
+        return model.strip(), provider.strip()
+    return key, ""
+
+
+def _normalise_entry(key, item) -> dict | None:
+    """把一条画像记录规范化，补齐字段、归一化配额/降级链/场景。"""
+    entry = dict(item)
+    mid = str(entry.get("id") or "").strip()
+    prov = str(entry.get("provider") or "").strip()
+    if not mid:
+        m, p = _split_key(key)
+        mid, prov = m, p or prov
+    if not mid:
+        return None
+
+    entry["id"] = mid
+    entry["provider"] = prov
+    entry.setdefault("tier", "")
+    entry.setdefault("cost", "paid")
+    entry.setdefault("quota_per_window", None)
+    entry.setdefault("peak_safe", True)
+    entry.setdefault("role", "")
+    entry.setdefault("scenarios", [])
+    entry.setdefault("fallback_chain", [])
+    entry.setdefault("label", "")
+
+    entry["tier"] = str(entry.get("tier") or "").strip()
+    entry["cost"] = "free" if str(entry.get("cost") or "").strip().lower() == "free" else "paid"
+    entry["peak_safe"] = bool(entry.get("peak_safe", True))
+
+    quota = entry.get("quota_per_window")
+    if quota is not None and str(quota).strip() != "":
+        try:
+            entry["quota_per_window"] = int(quota)
+        except (TypeError, ValueError):
+            entry["quota_per_window"] = None
+    else:
+        entry["quota_per_window"] = None
+
+    chain = []
+    for c in entry.get("fallback_chain") or []:
+        if isinstance(c, str):
+            c = c.strip()
+            if c:
+                chain.append(c)
+        elif isinstance(c, dict):
+            cid = str(c.get("id") or c.get("model") or "").strip()
+            cprov = str(c.get("provider") or "").strip()
+            if cid:
+                chain.append(f"{cid}@{cprov}" if cprov else cid)
+    entry["fallback_chain"] = chain
+
+    scenarios = entry.get("scenarios") or []
+    if isinstance(scenarios, str):
+        scenarios = [scenarios]
+    entry["scenarios"] = [str(s).strip() for s in scenarios if str(s).strip()]
+    return entry
+
+
+def is_peak_hour(dt=None) -> bool:
+    """峰谷判断：Asia/Shanghai 时间 9:00-12:00、14:00-18:00（含边界）。
+
+    传入 naive datetime 时按 Asia/Shanghai 解释；传入 aware datetime 时会
+    转换到 Asia/Shanghai 后再判断。
+    """
+    if dt is None:
+        dt = datetime.now(_SHANGHAI_TZ)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_SHANGHAI_TZ)
+    else:
+        try:
+            dt = dt.astimezone(_SHANGHAI_TZ)
+        except Exception:
+            pass
+    hm = dt.hour * 60 + dt.minute
+    return (9 * 60 <= hm <= 12 * 60) or (14 * 60 <= hm <= 18 * 60)
+
+
+class ModelPolicy:
+    """模型画像表。"""
+
+    def __init__(self, state_dir: str | Path | None = None) -> None:
+        self.state_dir = Path(state_dir).expanduser() if state_dir is not None else default_state_dir()
+
+    @property
+    def policy_path(self) -> Path:
+        return self.state_dir / "model-policy.json"
+
+    @staticmethod
+    def is_peak_hour(dt=None) -> bool:
+        return is_peak_hour(dt)
+
+    def get_policy(self) -> dict:
+        """返回合并后的策略：{"models": {key: entry}, "schedule": [...], "enabled": bool}。"""
+        models = {k: dict(v) for k, v in DEFAULT_MODEL_POLICIES.items()}
+        schedule = list(DEFAULT_SCHEDULE)
+        enabled = DEFAULT_ENABLED
+
+        raw_data = {}
+        path = self.policy_path
+        try:
+            if path.exists():
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    raw_data = loaded
+        except Exception:
+            logger.warning("Failed to load model-policy.json; falling back to defaults", exc_info=True)
+
+        raw_models = raw_data.get("models")
+        iterable = []
+        if isinstance(raw_models, dict):
+            iterable = [(str(k), v) for k, v in raw_models.items()]
+        elif isinstance(raw_models, list):
+            for item in raw_models:
+                if not isinstance(item, dict):
+                    continue
+                key = str(item.get("key") or "").strip()
+                if not key:
+                    mid = str(item.get("id") or "").strip()
+                    prov = str(item.get("provider") or "").strip()
+                    if mid:
+                        key = f"{mid}@{prov}" if prov else mid
+                if key:
+                    iterable.append((key, item))
+
+        for key, item in iterable:
+            if not isinstance(item, dict):
+                continue
+            hint = _normalise_entry(key, item)
+            if not hint:
+                continue
+            actual_key = f"{hint['id']}@{hint['provider']}" if hint["provider"] else hint["id"]
+            merged = dict(models.get(actual_key, {}))
+            for k, v in item.items():
+                if k == "key":
+                    continue
+                if v is not None:
+                    merged[k] = v
+            final = _normalise_entry(actual_key, merged)
+            if final:
+                models[actual_key] = final
+
+        if isinstance(raw_data.get("schedule"), list):
+            schedule = []
+            for r in raw_data["schedule"]:
+                if isinstance(r, dict):
+                    schedule.append({
+                        "time": str(r.get("time") or "").strip(),
+                        "model": str(r.get("model") or "").strip(),
+                        "provider": str(r.get("provider") or "").strip() or None,
+                        "label": str(r.get("label") or "").strip(),
+                    })
+
+        if isinstance(raw_data.get("enabled"), bool):
+            enabled = raw_data.get("enabled")
+
+        return {"models": models, "schedule": schedule, "enabled": enabled}
+
+    def list_models(self) -> list:
+        """返回画像表全量列表（每个条目带 key）。"""
+        out = []
+        for key, entry in self.get_policy()["models"].items():
+            item = dict(entry)
+            item["key"] = key
+            out.append(item)
+        out.sort(key=lambda x: str(x.get("key", "")))
+        return out
+
+    def resolve_model(self, model_id, provider=None) -> dict | None:
+        """按 (model_id, provider) 或 id@provider 解析画像条目；未找到返回 None。"""
+        mid = str(model_id or "").strip()
+        if not mid:
+            return None
+        models = self.get_policy()["models"]
+        prov = str(provider or "").strip()
+        if prov:
+            if "@" in mid:
+                return models.get(mid)
+            return models.get(f"{mid}@{prov}")
+        if "@" in mid:
+            return models.get(mid)
+        for entry in models.values():
+            if entry.get("id") == mid:
+                return entry
+        return None
+
+    def find_by_role(self, role: str, cost: str | None = None) -> list:
+        """按 role（可选 cost 过滤）返回候选画像条目列表。
+
+        返回按 tier 降序（S+ > S > A > A- > B+）排列的条目，调用方按序
+        检查额度即可实现「能力优先」的降级链。与具体模型名解耦。
+        """
+        wanted = str(role or "").strip()
+        models = self.get_policy()["models"]
+        tier_order = {"S+": 0, "S": 1, "A": 2, "A-": 3, "B+": 4, "B": 5, "C": 6}
+        out = []
+        for entry in models.values():
+            if wanted and str(entry.get("role") or "") != wanted:
+                continue
+            if cost is not None and str(entry.get("cost") or "").lower() != str(cost).lower():
+                continue
+            out.append(entry)
+        out.sort(key=lambda e: tier_order.get(str(e.get("tier") or ""), 99))
+        return out
+
+    def get_quota_table(self) -> dict:
+        """返回免费模型的 5h 窗口配额上限，key 为 id@provider。"""
+        out = {}
+        for key, entry in self.get_policy()["models"].items():
+            if str(entry.get("cost") or "").lower() != "free":
+                continue
+            quota = entry.get("quota_per_window")
+            if quota is None:
+                continue
+            try:
+                out[key] = int(quota)
+            except (TypeError, ValueError):
+                out[key] = 0
+        return out
+
+    def update_policy(self, updates: dict) -> dict:
+        """更新 model-policy.json（schedule/enabled/models/可调参数），原子写盘。"""
+        if not isinstance(updates, dict):
+            raise ValueError("policy updates must be a dict")
+        path = self.policy_path
+        current = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    current = loaded
+            except Exception:
+                current = {}
+
+        for key in ("models", "schedule", "enabled"):
+            if key in updates:
+                current[key] = updates[key]
+        for key, value in updates.items():
+            if key not in ("models", "schedule", "enabled"):
+                current[key] = value
+
+        atomic_write_json(path, current)
+        return self.get_policy()
+
+
+_default_policy: ModelPolicy | None = None
+
+
+def _get_default_policy() -> ModelPolicy:
+    global _default_policy
+    if _default_policy is None or _default_policy.state_dir != default_state_dir():
+        _default_policy = ModelPolicy()
+    return _default_policy
+
+
+def get_policy() -> dict:
+    return _get_default_policy().get_policy()
+
+
+def list_models() -> list:
+    return _get_default_policy().list_models()
+
+
+def resolve_model(model_id, provider=None) -> dict | None:
+    return _get_default_policy().resolve_model(model_id, provider)
+
+
+def find_by_role(role: str, cost: str | None = None) -> list:
+    return _get_default_policy().find_by_role(role, cost)
+
+
+def get_quota_table() -> dict:
+    return _get_default_policy().get_quota_table()
+
+
+def update_policy(updates: dict) -> dict:
+    return _get_default_policy().update_policy(updates)

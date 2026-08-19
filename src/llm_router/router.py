@@ -1,0 +1,313 @@
+"""llm_router.router — 智能模型调度器·决策引擎（核心）。
+
+决策按 ROUTE_CHAINS（role 链）驱动，与具体模型名解耦：
+  urgent   -> stable -> paid-fallback
+  complex  -> free-flagship -> paid-fallback
+  daily    -> free-bulk -> free-preview -> free-flagship -> paid-fallback
+  simple   -> free-bulk -> free-preview -> paid-fallback
+
+免费模型高峰/谷值均优先；回退付费模型时，高峰 reason 含「官方高峰翻倍」警告。
+"""
+from __future__ import annotations
+
+import logging
+import re
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from . import policy, quota
+
+logger = logging.getLogger(__name__)
+
+_CODE_BLOCK = "```"
+_ERROR_RE = re.compile(r"报错|error|exception|traceback|failed|崩溃|fail", re.IGNORECASE)
+_SOURCE_RE = re.compile(r"\.py|\.js|\.ts|源码|函数|class\b|def\b|import\b|接口")
+_URGENT_RE = re.compile(r"紧急|马上|尽快|asap|urgent|立刻", re.IGNORECASE)
+# 强意图 +3（命中词同时属于弱词表 → 自然叠加到 >=4 → 复杂任务档）；
+# 弱意图 +1（日常闲聊含「代码/项目/bug」等词不误伤，只 +1）。
+_TASK_STRONG_RE = re.compile(
+    r"写(一?个|段|点|个)?[^，。！？\n]{0,20}?(python|py|js|javascript|java|go|rust|shell|bash|sql|html|css|vue|react|脚本|代码|程序|函数|爬虫|工具|demo)"
+    r"|编[程码写]|开发|重构|改(一?下|一?个)?[^，。！？\n]{0,12}?(代码|脚本|程序|函数)"
+    r"|做(一?个|个)?[^，。！？\n]{0,12}?项目|搞(一?个|个)?[^，。！？\n]{0,12}?(项目|系统|网站|应用|平台|工具)|搭(建|一?个)?(项目|系统|网站|应用|平台|框架)"
+    r"|创建.*项目|实现.*(功能|模块|接口|算法)|优化.*(代码|性能|脚本|程序|系统)"
+    r"|修(一?个|一下|一?下)?bug|修(一?下|一?个)?[^，。！？\n]{0,12}?(代码|脚本|程序|函数)|修复.*(bug|问题|错误)|debug|排错|排查.*(bug|问题)",
+    re.IGNORECASE)
+_TASK_HINT_RE = re.compile(
+    r"代码|脚本|项目|bug|爬虫|算法|模块|接口|前端|后端|数据库|部署|优化|重构|功能|系统|网站|应用|框架|demo|函数",
+    re.IGNORECASE)
+
+
+def assess_difficulty(text: str) -> int:
+    """规则式难度分 0-5（纯 CPU，不调 LLM）。"""
+    text = str(text or "")
+    score = 0
+    if _CODE_BLOCK in text:
+        score += 2
+    if _ERROR_RE.search(text):
+        score += 2
+    if _SOURCE_RE.search(text):
+        score += 1
+    if _TASK_STRONG_RE.search(text):
+        score += 3
+    if _TASK_HINT_RE.search(text):
+        score += 1
+    length = len(text)
+    if length > 2000:
+        score += 1
+    if length > 8000:
+        score += 1
+    return max(0, min(5, score))
+
+
+def assess_urgency(text: str) -> bool:
+    return bool(_URGENT_RE.search(str(text or "")))
+
+
+def format_model_key(model, provider) -> str:
+    model = str(model or "").strip()
+    provider = str(provider or "").strip()
+    if not model:
+        return ""
+    return f"{model}@{provider}" if provider else model
+
+
+def parse_model_key(key) -> tuple:
+    key = str(key or "").strip()
+    if not key:
+        return "", ""
+    if "@" in key:
+        model, provider = key.split("@", 1)
+        return model.strip(), provider.strip()
+    return key, ""
+
+
+def _policy_store(policy_store=None):
+    return policy_store if policy_store is not None else policy
+
+
+def _as_timestamp(now):
+    if now is None:
+        return None
+    if isinstance(now, datetime):
+        return now.timestamp()
+    try:
+        return float(now)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_result(model: str, provider: str, reason: str, policy_store=None) -> dict:
+    store = _policy_store(policy_store)
+    entry = store.resolve_model(model, provider)
+    return {
+        "model": model,
+        "provider": provider,
+        "reason": reason,
+        "tier": entry.get("tier", "") if entry else "",
+        "cost": entry.get("cost", "paid") if entry else "paid",
+    }
+
+
+def _remaining(entry: dict, quota_snapshot, now_ts, quota_tracker=None) -> int:
+    key = format_model_key(entry.get("id"), entry.get("provider"))
+    if quota_snapshot is not None:
+        # 传入 snapshot 时它是唯一依据，不再碰真实额度文件。
+        if key in quota_snapshot:
+            try:
+                return int(quota_snapshot.get(key))
+            except (TypeError, ValueError):
+                return 0
+        if entry.get("id") in quota_snapshot:
+            try:
+                return int(quota_snapshot.get(entry.get("id")))
+            except (TypeError, ValueError):
+                return 0
+        return 0
+    if quota_tracker is not None:
+        return quota_tracker.quota_left(entry.get("id"), entry.get("provider"), now_ts)
+    return quota.quota_left(entry.get("id"), entry.get("provider"), now_ts)
+
+
+def _entry_available(entry: dict, quota_snapshot, now, quota_tracker=None) -> bool:
+    if not entry:
+        return False
+    if str(entry.get("cost") or "").lower() != "free":
+        return True
+    if quota_snapshot is None:
+        # 失败冷却中的免费模型视为不可用（免费 provider 限流 → 自动降级）。
+        now_ts = _as_timestamp(now)
+        if quota_tracker is not None:
+            cd = quota_tracker.cooldown_seconds_left(entry.get("id"), entry.get("provider"), now_ts)
+        else:
+            cd = quota.cooldown_seconds_left(entry.get("id"), entry.get("provider"), now_ts)
+        if cd > 0:
+            return False
+        return _remaining(entry, None, now_ts, quota_tracker) > 0
+    return _remaining(entry, quota_snapshot, _as_timestamp(now), quota_tracker) > 0
+
+
+def _paid_warning(now, base: str) -> str:
+    if policy.is_peak_hour(now):
+        return f"{base}，官方高峰翻倍"
+    return f"{base}，谷值官方正常价兜底"
+
+
+def _route(
+    difficulty: int,
+    *,
+    urgent: bool,
+    now,
+    quota_snapshot,
+    policy_store=None,
+    quota_tracker=None,
+) -> dict:
+    store = _policy_store(policy_store)
+    if now is None:
+        now = datetime.now()
+    try:
+        difficulty = max(0, min(5, int(difficulty or 0)))
+    except (TypeError, ValueError):
+        difficulty = 0
+    urgent = bool(urgent)
+
+    # 决策链按 role 驱动（见 policy.ROUTE_CHAINS），与具体模型名解耦。
+    if urgent:
+        chain = policy.ROUTE_CHAINS.get("urgent", ["stable"])
+        chain_label = "紧急任务，能力优先"
+    elif difficulty >= 4:
+        chain = policy.ROUTE_CHAINS.get("complex", ["free-flagship"])
+        chain_label = "复杂任务"
+    elif 2 <= difficulty <= 3:
+        chain = policy.ROUTE_CHAINS.get("daily", ["free-bulk"])
+        chain_label = "日常任务"
+    else:
+        chain = policy.ROUTE_CHAINS.get("simple", ["free-bulk"])
+        chain_label = "简单任务"
+
+    for role in chain:
+        # 免费 role 先查免费模型；stable/paid-fallback 是付费兜底，免费/付费都允许
+        # （付费模型没有额度概念，cost=paid 恒可用）。
+        if role in ("stable", "paid-fallback"):
+            candidates = store.find_by_role(role)
+        else:
+            candidates = store.find_by_role(role, cost="free")
+        for entry in candidates:
+            if not _entry_available(entry, quota_snapshot, now, quota_tracker):
+                continue
+            model = str(entry.get("id") or "").strip()
+            provider = str(entry.get("provider") or "").strip()
+            label = str(entry.get("label") or f"{model}@{provider}")
+            if role == "stable":
+                reason = f"{chain_label}，{label} 最稳"
+            elif role == "paid-fallback":
+                reason = _paid_warning(now, f"{chain_label}，免费额度不足，回退 {label}")
+            else:
+                reason = f"{chain_label}，{label} 可用"
+            return _build_result(model, provider, reason, store)
+
+    # 兜底：连付费候选都没有时返回空结果（理论上不会到，chain 末尾必有付费）。
+    return {
+        "model": "",
+        "provider": "",
+        "reason": f"{chain_label}，无可选模型",
+        "tier": "",
+        "cost": "paid",
+    }
+
+
+def route_model(difficulty: int, *, urgent: bool, now=None, quota_snapshot=None) -> dict:
+    """核心路由决策。quota_snapshot 可选：{id@provider: remaining}，缺省时实时查 quota。"""
+    if now is None:
+        now = datetime.now()
+    return _route(difficulty, urgent=urgent, now=now, quota_snapshot=quota_snapshot)
+
+
+def recommend_for_session(
+    session_text: str,
+    *,
+    message_count: int = 0,
+    now=None,
+    quota_snapshot=None,
+) -> dict:
+    """会话创建/新消息前的推荐入口：组合难度、紧急度与路由决策。"""
+    if now is None:
+        now = datetime.now()
+    text = str(session_text or "")
+    difficulty = assess_difficulty(text)
+    urgent = assess_urgency(text)
+    route = route_model(difficulty, urgent=urgent, now=now, quota_snapshot=quota_snapshot)
+    try:
+        messages = max(0, int(message_count or 0))
+    except (TypeError, ValueError):
+        messages = 0
+    return {
+        "difficulty": difficulty,
+        "urgent": urgent,
+        "message_count": messages,
+        "peak": policy.is_peak_hour(now),
+        **route,
+        "key": format_model_key(route.get("model"), route.get("provider")),
+    }
+
+
+class ModelRouter:
+    """可参数化 state 目录的路由器（供多实例/多租户场景使用）。"""
+
+    def __init__(
+        self,
+        state_dir: str | Path | None = None,
+        *,
+        policy_store=None,
+        quota_tracker=None,
+    ) -> None:
+        if policy_store is not None:
+            self.policy = policy_store
+        else:
+            self.policy = policy.ModelPolicy(state_dir)
+        if quota_tracker is not None:
+            self.quota = quota_tracker
+        else:
+            self.quota = quota.QuotaTracker(
+                state_dir=getattr(self.policy, "state_dir", state_dir),
+                policy_store=self.policy,
+            )
+
+    def route_model(self, difficulty: int, *, urgent: bool, now=None, quota_snapshot=None) -> dict:
+        if now is None:
+            now = datetime.now()
+        return _route(
+            difficulty,
+            urgent=urgent,
+            now=now,
+            quota_snapshot=quota_snapshot,
+            policy_store=self.policy,
+            quota_tracker=self.quota,
+        )
+
+    def recommend_for_session(
+        self,
+        session_text: str,
+        *,
+        message_count: int = 0,
+        now=None,
+        quota_snapshot=None,
+    ) -> dict:
+        if now is None:
+            now = datetime.now()
+        text = str(session_text or "")
+        difficulty = assess_difficulty(text)
+        urgent = assess_urgency(text)
+        route = self.route_model(difficulty, urgent=urgent, now=now, quota_snapshot=quota_snapshot)
+        try:
+            messages = max(0, int(message_count or 0))
+        except (TypeError, ValueError):
+            messages = 0
+        return {
+            "difficulty": difficulty,
+            "urgent": urgent,
+            "message_count": messages,
+            "peak": policy.is_peak_hour(now),
+            **route,
+            "key": format_model_key(route.get("model"), route.get("provider")),
+        }

@@ -1,0 +1,32 @@
+{
+  "_comment": "自定义画像覆盖示例。将本文件内容合并进 state 目录下的 model-policy.json 即可覆盖默认画像。",
+  "_comment_fields": {
+    "id": "模型 id（必填）",
+    "provider": "provider 名称（必填，与 id 组成 id@provider 唯一键）",
+    "tier": "能力档位：S+ | S | A | A- | B+",
+    "cost": "paid | free；free 模型会受 quota_per_window 限制",
+    "quota_per_window": "免费模型每 5 小时窗口的可用次数；付费模型置 null",
+    "peak_safe": "高峰时段是否安全可用，true/false",
+    "fallback_chain": "额度耗尽或不可用时的降级链，元素为 id@provider 字符串",
+    "scenarios": "场景标签数组，如 simple/daily/complex",
+    "label": "前端展示名称"
+  },
+  "models": {
+    "my-free-model@my-provider": {
+      "id": "my-free-model",
+      "provider": "my-provider",
+      "tier": "A",
+      "cost": "free",
+      "quota_per_window": 200,
+      "peak_safe": true,
+      "fallback_chain": ["gpt-4o-mini@openai"],
+      "scenarios": ["simple", "daily"],
+      "label": "My Free Model"
+    },
+    "gpt-4o-mini@openai": {
+      "quota_per_window": 800
+    }
+  },
+  "schedule": [],
+  "enabled": true
+}
