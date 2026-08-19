@@ -110,7 +110,7 @@ PYTHONPATH=src python
 Two lines to get going:
 
 ```python
-from llm_router import assess_difficulty, route_model
+from model_scheduler import assess_difficulty, route_model
 
 text = "帮我写一个 Python 脚本"
 decision = route_model(assess_difficulty(text), urgent=False)
@@ -121,13 +121,53 @@ print(decision)
 Session-level recommendation entry:
 
 ```python
-from llm_router import recommend_for_session
+from model_scheduler import recommend_for_session
 
 rec = recommend_for_session("帮我写一个 Python 脚本", message_count=3)
 print(rec)
 ```
 
 Full example: `examples/quickstart.py`.
+
+### Proxy layer (OpenAI-compatible, works with any agent)
+
+Since v0.2.0, model-scheduler ships an **OpenAI-compatible proxy layer**: any OpenAI-compatible client (Hermes / Claude Code / Codex / OpenClaw / any SDK) can point its `base_url` at the proxy and automatically get difficulty assessment + free-quota tracking + peak-hour awareness + failure cooldown fallback — **zero code changes**.
+
+```bash
+pip install model-scheduler
+
+# Prepare config (model-policy.json must include a providers section)
+export OPENAI_API_KEY=sk-xxx
+export DEEPSEEK_API_KEY=sk-xxx
+
+# Start the proxy (pure local process, zero external dependencies, no telemetry)
+model-scheduler serve --config model-policy.json --host 127.0.0.1 --port 8765
+```
+
+Plug in any client:
+
+```bash
+curl http://127.0.0.1:8765/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"auto","messages":[{"role":"user","content":"write a quicksort"}],"stream":true}'
+```
+
+```python
+# OpenAI SDK example (point base_url at the proxy; api_key can be any placeholder)
+from openai import OpenAI
+client = OpenAI(base_url="http://127.0.0.1:8765/v1", api_key="unused")
+resp = client.chat.completions.create(model="auto", messages=[{"role": "user", "content": "write a quicksort"}])
+```
+
+Proxy features:
+- `POST /v1/chat/completions` (streaming SSE + non-streaming pass-through)
+- `GET /v1/models` (lists only currently available models)
+- `GET /v1/health` (health check)
+- Auto-accounting on every call (`record_call`), automatic cooldown on failure (`record_failure` → routing skips the model)
+- Keys referenced via `env:VAR` — **never hardcoded into config**
+- Pure Python standard library (`http.server` + `urllib`), zero third-party dependencies
+
+**Deployment model**: the proxy is a pure local process — no external scheduler service or central node; decisions and state (quota, peak hours, cooldown) live in the library + local state files, no telemetry collected. You only need your own provider API keys and your own `model-policy.json` (the default profile is just a mechanism demo).
 
 ## Configuration overrides (pick one)
 
@@ -151,7 +191,7 @@ The library reads/writes `model-policy.json`, `model-quota.json` and `model-cool
 
 ```python
 from pathlib import Path
-from llm_router import ModelPolicy, QuotaTracker, ModelRouter
+from model_scheduler import ModelPolicy, QuotaTracker, ModelRouter
 
 state = Path("/tmp/llm-router-state")
 policy = ModelPolicy(state_dir=state)
@@ -159,7 +199,7 @@ quota = QuotaTracker(state_dir=state, policy_store=policy)
 router = ModelRouter(state_dir=state)
 
 # Or configure the module-level default state dir
-from llm_router import configure_state_dir
+from model_scheduler import configure_state_dir
 configure_state_dir("/tmp/llm-router-state")
 ```
 

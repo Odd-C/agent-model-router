@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from llm_router.router import (
+from model_scheduler.router import (
     assess_difficulty,
     assess_urgency,
     format_model_key,
@@ -154,7 +154,7 @@ class RouteDecisionTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        from llm_router.policy import ModelPolicy
+        from model_scheduler.policy import ModelPolicy
 
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
@@ -187,7 +187,7 @@ class RouteDecisionTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        from llm_router.policy import ModelPolicy
+        from model_scheduler.policy import ModelPolicy
 
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)

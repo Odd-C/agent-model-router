@@ -106,7 +106,7 @@ PYTHONPATH=src python
 两行跑通：
 
 ```python
-from llm_router import assess_difficulty, route_model
+from model_scheduler import assess_difficulty, route_model
 
 text = "帮我写一个 Python 脚本"
 decision = route_model(assess_difficulty(text), urgent=False)
@@ -117,13 +117,53 @@ print(decision)
 会话级推荐入口：
 
 ```python
-from llm_router import recommend_for_session
+from model_scheduler import recommend_for_session
 
 rec = recommend_for_session("帮我写一个 Python 脚本", message_count=3)
 print(rec)
 ```
 
 完整示例见 `examples/quickstart.py`。
+
+### 代理层（OpenAI 兼容，全 Agent 通用）
+
+v0.2.0 起内置 **OpenAI 兼容代理层**：任何 OpenAI 兼容客户端（Hermes / Claude Code / Codex / OpenClaw / 任意 SDK）把 `base_url` 指向代理，即可自动获得难度评估 + 免费额度跟踪 + 峰谷感知 + 失败冷却降级，**零改码**。
+
+```bash
+pip install model-scheduler
+
+# 准备配置（model-policy.json，需含 providers 段）
+export OPENAI_API_KEY=sk-xxx
+export DEEPSEEK_API_KEY=sk-xxx
+
+# 启动代理（纯本地进程，零外部依赖，不收集遥测）
+model-scheduler serve --config model-policy.json --host 127.0.0.1 --port 8765
+```
+
+任意客户端接入：
+
+```bash
+curl http://127.0.0.1:8765/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"auto","messages":[{"role":"user","content":"写个快排"}],"stream":true}'
+```
+
+```python
+# OpenAI SDK 示例（base_url 指向代理即可，api_key 填任意占位值）
+from openai import OpenAI
+client = OpenAI(base_url="http://127.0.0.1:8765/v1", api_key="unused")
+resp = client.chat.completions.create(model="auto", messages=[{"role": "user", "content": "写个快排"}])
+```
+
+代理层特性：
+- `POST /v1/chat/completions`（流式 SSE + 非流式透传）
+- `GET /v1/models`（只列出当前可用模型）
+- `GET /v1/health`（健康检查）
+- 每次调用自动记账（`record_call`），失败自动冷却（`record_failure` → 下次路由绕过）
+- 密钥通过 `env:VAR` 引用环境变量，**不硬编码进配置**
+- 纯 Python 标准库实现（`http.server` + `urllib`），零第三方依赖
+
+**部署形态**：代理是纯本地进程，不依赖任何外部调度服务/中心节点；决策与状态（额度、峰谷、冷却）全部在库内 + 本地状态文件，不收集遥测。用户只需自备 provider 的 API key 和自己的 `model-policy.json`（默认画像仅为机制演示）。
 
 ## 配置覆盖方式（三选一）
 
@@ -147,7 +187,7 @@ export LLM_ROUTER_STATE_DIR=/path/to/state
 
 ```python
 from pathlib import Path
-from llm_router import ModelPolicy, QuotaTracker, ModelRouter
+from model_scheduler import ModelPolicy, QuotaTracker, ModelRouter
 
 state = Path("/tmp/llm-router-state")
 policy = ModelPolicy(state_dir=state)
@@ -155,7 +195,7 @@ quota = QuotaTracker(state_dir=state, policy_store=policy)
 router = ModelRouter(state_dir=state)
 
 # 或者直接配置模块级默认 state 目录
-from llm_router import configure_state_dir
+from model_scheduler import configure_state_dir
 configure_state_dir("/tmp/llm-router-state")
 ```
 

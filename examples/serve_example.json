@@ -1,0 +1,72 @@
+{
+  "language": "en",
+  "providers": {
+    "openai": {"base_url": "https://api.openai.com/v1", "api_key": "env:OPENAI_API_KEY"},
+    "deepseek": {"base_url": "https://api.deepseek.com/v1", "api_key": "env:DEEPSEEK_API_KEY"},
+    "google": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "api_key": "env:GEMINI_API_KEY"}
+  }
+}
+```
+
+## 测试清单
+
+以下为 tests 中应覆盖的边界用例清单（不执行）：
+
+1. **请求解析**
+   - messages 中 `content` 为字符串时正常拼接。
+   - messages 中 `content` 为 parts list（`{"type":"text","text":...}`）时正常拼接。
+   - 多条 message 拼接顺序正确，空 messages 传给 router 的文本为 `""`。
+   - 非法 JSON body 返回 400 且不触发转发。
+   - body 不是 JSON object 返回 400。
+
+2. **难度评估与路由改写**
+   - 代码生成类中文请求（如“帮我写一个 Python 脚本”）应评估为复杂任务并选择 free-flagship（claude-3-5-sonnet）。
+   - 请求体 `model` 字段被决策结果替换。
+   - `temperature` / `max_tokens` / `top_p` / `tools` / `response_format` 等字段原样透传。
+
+3. **URL 拼接**
+   - base_url 含 `/v1`（如 `https://api.openai.com/v1`）→ 拼接 `/chat/completions`。
+   - base_url 不含 `/v1`（如 `https://api.deepseek.com`）→ 拼接 `/v1/chat/completions`。
+   - base_url 为 Google 兼容路径（`/v1beta/openai`）→ 直接拼接 `/chat/completions`。
+   - base_url 末尾带 `/` 时正确去除后拼接。
+   - base_url 已以 `/chat/completions` 结尾时避免重复拼接。
+
+4. **provider 配置与 API key**
+   - provider 未配置时返回 503，error 中包含 decision.reason，且不转发、不记账。
+   - provider `base_url` 为空时返回 503。
+   - `api_key: env:VAR` 从环境变量读取；环境变量缺失时按空字符串处理。
+   - `api_key` 为直接字符串时原样使用。
+   - providers 段缺失时 `get_providers()` 返回空 dict（库 API 不抛错）。
+   - `provider_config(name)` / `has_provider(name)` 对存在与不存在的 provider 返回正确结果。
+
+5. **成功记账**
+   - 2xx 响应后 `record_call` 被调用，免费模型 `quota_left` 递减。
+   - 2xx 响应头包含 `X-Model-Scheduler: <decision.key>`。
+   - 付费模型成功调用不产生额度扣减。
+
+6. **失败记账与冷却**
+   - 4xx/5xx 上游响应触发 `record_failure`，模型进入冷却。
+   - 连接错误/超时返回 502 JSON，并触发 `record_failure`。
+   - 失败不扣减免费额度。
+   - 冷却期内的模型不出现在 `/v1/models`。
+   - 冷却期内的免费模型被路由绕过，自动选择下一候选 provider。
+   - 免费额度耗尽的模型不出现在 `/v1/models`。
+
+7. **流式（SSE）**
+   - `stream: true` 时走流式转发函数，客户端逐块收到 SSE 事件。
+   - SSE 响应头包含 `Content-Type: text/event-stream` 与 `X-Model-Scheduler`。
+   - `data: [DONE]` 原样透传。
+   - 上游在 SSE 开始前返回 4xx/5xx 时，保留上游状态码与错误 body，并触发冷却。
+   - SSE 已开始后转发中断时，向客户端发送错误 SSE 事件后关闭连接。
+
+8. **HTTP 端点**
+   - `GET /v1/health` 返回 `{"status":"ok","version":"0.2.0"}`。
+   - `GET /v1/models` 返回 `{"object":"list","data":[...]}`，每个模型项包含 `id`（`id@provider`）、`object`、`owned_by`。
+   - 未知路径返回 404 JSON。
+
+9. **集成全链路**
+   - mock provider 收到改写后的请求：path 正确、Authorization 正确、body.model 正确。
+   - 非流式请求客户端收到上游透传 JSON。
+   - 流式请求客户端收到完整 SSE 流（含 `[DONE]`）。
+   - 失败降级链路：mock-a 返回 429 → 记账冷却 → 第二次请求路由到 mock-b，mock-a 不再收到请求。
+   - 所有集成测试使用临时 state 目录，不污染真实状态文件。

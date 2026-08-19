@@ -1,5 +1,5 @@
 """最小可运行示例：难度评估 + 路由决策 + 会话级推荐。"""
-from llm_router import assess_difficulty, assess_urgency, recommend_for_session, route_model
+from model_scheduler import assess_difficulty, assess_urgency, recommend_for_session, route_model
 
 
 def main() -> None:

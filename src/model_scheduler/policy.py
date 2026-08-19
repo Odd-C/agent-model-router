@@ -1,4 +1,4 @@
-"""llm_router.policy — 模型画像表。
+"""model_scheduler.policy — 模型画像表。
 
 职责：
   1. 内置通用示例模型画像（能力档、付费/免费、5h 窗口配额、
@@ -288,6 +288,35 @@ def _normalise_peak_hours(raw, default) -> list:
     return out
 
 
+def _normalise_providers(raw) -> dict:
+    """规范化 providers 段：{"<name>": {"base_url": "...", "api_key": "env:VAR" | "sk-..."}}。
+
+    只做结构规范化与字符串清理，不读取环境变量（环境变量解析在 server 侧）。
+    providers 段缺失/非法时返回空 dict，不抛错。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for raw_name, item in raw.items():
+        name = str(raw_name or "").strip()
+        if not name or not isinstance(item, dict):
+            continue
+        cfg = dict(item)
+        cfg["base_url"] = str(cfg.get("base_url") or "").strip()
+
+        api_key = cfg.get("api_key")
+        if api_key is None:
+            api_key = ""
+        elif isinstance(api_key, str):
+            api_key = api_key.strip()
+        else:
+            api_key = str(api_key).strip()
+        cfg["api_key"] = api_key
+
+        out[name] = cfg
+    return out
+
+
 def is_peak_hour(dt=None, peak_hours=None) -> bool:
     """峰谷判断（Asia/Shanghai 时间，含边界）。
 
@@ -425,7 +454,16 @@ class ModelPolicy:
         if language not in ("zh", "en"):
             language = DEFAULT_LANGUAGE
 
-        return {"models": models, "schedule": schedule, "enabled": enabled, "peak_hours": peak_hours, "language": language}
+        providers = _normalise_providers(raw_data.get("providers"))
+
+        return {
+            "models": models,
+            "schedule": schedule,
+            "enabled": enabled,
+            "peak_hours": peak_hours,
+            "language": language,
+            "providers": providers,
+        }
 
     def list_models(self) -> list:
         """返回画像表全量列表（每个条目带 key）。"""
@@ -473,6 +511,25 @@ class ModelPolicy:
             out.append(entry)
         out.sort(key=lambda e: tier_order.get(str(e.get("tier") or ""), 99))
         return out
+
+    def get_providers(self) -> dict:
+        """返回 providers 段完整配置（含 api_key 原文或 env:VAR 引用字符串）。
+
+        providers 段缺失时返回空 dict，不抛错。
+        """
+        return self.get_policy().get("providers", {})
+
+    def provider_config(self, name) -> dict | None:
+        """返回单个 provider 配置；不存在时返回 None。"""
+        providers = self.get_providers()
+        name = str(name or "").strip()
+        if not name:
+            return None
+        return providers.get(name)
+
+    def has_provider(self, name) -> bool:
+        """判断 provider 是否存在。"""
+        return self.provider_config(name) is not None
 
     def get_quota_table(self) -> dict:
         """返回免费模型的 5h 窗口配额上限，key 为 id@provider。"""
@@ -559,3 +616,18 @@ def get_quota_table() -> dict:
 
 def update_policy(updates: dict) -> dict:
     return _get_default_policy().update_policy(updates)
+
+
+def get_providers() -> dict:
+    """模块级便捷入口：返回默认 state 目录下的 providers 配置。"""
+    return _get_default_policy().get_providers()
+
+
+def provider_config(name) -> dict | None:
+    """模块级便捷入口：返回单个 provider 配置。"""
+    return _get_default_policy().provider_config(name)
+
+
+def has_provider(name) -> bool:
+    """模块级便捷入口：判断 provider 是否存在。"""
+    return _get_default_policy().has_provider(name)
