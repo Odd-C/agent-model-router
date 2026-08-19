@@ -223,7 +223,9 @@ def _normalise_entry(key, item) -> dict | None:
     entry.setdefault("scenarios", [])
     entry.setdefault("fallback_chain", [])
     entry.setdefault("label", "")
+    entry.setdefault("enabled", True)
 
+    entry["enabled"] = False if str(entry.get("enabled") or "").lower() in ("false", "0", "no", "off") else bool(entry.get("enabled", True))
     entry["tier"] = str(entry.get("tier") or "").strip()
     entry["cost"] = "free" if str(entry.get("cost") or "").strip().lower() == "free" else "paid"
     entry["peak_safe"] = bool(entry.get("peak_safe", True))
@@ -437,6 +439,9 @@ class ModelPolicy:
                     merged[k] = v
             final = _normalise_entry(actual_key, merged)
             if final:
+                if final.get("enabled") is False:
+                    models.pop(actual_key, None)
+                    continue
                 models[actual_key] = final
 
         if isinstance(raw_data.get("schedule"), list):
@@ -474,6 +479,8 @@ class ModelPolicy:
         """返回画像表全量列表（每个条目带 key）。"""
         out = []
         for key, entry in self.get_policy()["models"].items():
+            if entry.get("enabled") is False:
+                continue
             item = dict(entry)
             item["key"] = key
             out.append(item)
@@ -509,6 +516,8 @@ class ModelPolicy:
         tier_order = {"S+": 0, "S": 1, "A": 2, "A-": 3, "B+": 4, "B": 5, "C": 6}
         out = []
         for entry in models.values():
+            if entry.get("enabled") is False:
+                continue
             if wanted and str(entry.get("role") or "") != wanted:
                 continue
             if cost is not None and str(entry.get("cost") or "").lower() != str(cost).lower():
