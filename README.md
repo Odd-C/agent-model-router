@@ -95,6 +95,27 @@ model-scheduler 是一个**智能模型调度器**：模型画像 + 免费额度
 
 ## 快速开始
 
+### 安装（推荐：PyPI）
+
+```bash
+pip install model-scheduler
+```
+
+安装后直接 import（无需 clone 源码）：
+
+```python
+from model_scheduler import recommend_for_session
+
+rec = recommend_for_session("帮我写一个 Python 脚本", message_count=3, session_id="demo-session-1")
+print(rec)
+```
+
+需要代理层 CLI 时：
+
+```bash
+model-scheduler serve --config model-policy.json
+```
+
 ### 直接 import（源码运行）
 
 ```bash

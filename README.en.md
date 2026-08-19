@@ -95,6 +95,27 @@ The paid-fallback warning ("peak price doubled" in `reason`) is also evaluated a
 
 ## Quick start
 
+### Install (recommended: PyPI)
+
+```bash
+pip install model-scheduler
+```
+
+Import directly after install (no need to clone the source):
+
+```python
+from model_scheduler import recommend_for_session
+
+rec = recommend_for_session("Write a Python script", message_count=3, session_id="demo-session-1")
+print(rec)
+```
+
+For the proxy CLI:
+
+```bash
+model-scheduler serve --config model-policy.json
+```
+
 ### Direct import (run from source)
 
 ```bash
