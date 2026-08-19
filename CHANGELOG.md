@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.3] - 2026-08-20
+
+### Added
+- README 新增 PyPI 安装小节（中英文）——`pip install model-scheduler` 即装即用，无需 clone 源码
+
 ## [0.2.2] - 2026-08-19
 
 ### Added
