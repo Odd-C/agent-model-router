@@ -48,6 +48,10 @@ DEFAULT_TASK_TYPE_TIER_EXPECTATION: dict[str, list[str]] = {
     "complex": ["S+", "S", "A"],
     "daily": ["A", "A-", "B+"],
     "simple": ALL_TIERS,
+    "image": ["S+", "S", "A", "A-", "B+"],   # 图片/视觉类，tier 区间放宽但需配能力校验
+    "vision": ["S+", "S", "A", "A-", "B+"],  # 视觉理解同 image
+    "batch": ["S+", "S", "A", "A-", "B+"],   # 批量处理，tier 区间放宽
+    "maintenance": ["S+", "S", "A", "A-", "B+"],  # 维护/部署
 }
 
 # 正向分项：原始值越大越好。
@@ -295,8 +299,29 @@ def quality_fit(task_type: str, candidate: dict) -> float:
 
     期望 tier 匹配得 0.9；不匹配得 0.4；``scenarios`` 含 task_type 时
     再 +0.1（上限 1.0）。范围 [0,1]。
+
+    image/vision 任务先做能力校验：候选必须具备视觉能力（scenarios 或
+    role 含 vision/image），否则直接返回 0.0（宁可不选也不选错）。
     """
     task_type = str(task_type or "").strip()
+
+    # 能力校验：image/vision 任务要求候选具备视觉能力
+    tt = task_type.lower()
+    if tt in ("image", "vision"):
+        raw_scenarios = candidate.get("scenarios") or []
+        if isinstance(raw_scenarios, str):
+            raw_scenarios = [raw_scenarios]
+        scenarios = {str(s).strip().lower() for s in raw_scenarios if str(s).strip()}
+        role = str(candidate.get("role") or "").lower()
+        has_vision = (
+            "vision" in scenarios
+            or "image" in scenarios
+            or "vision" in role
+            or "image" in role
+        )
+        if not has_vision:
+            return 0.0  # 无视觉能力 → 质量匹配为 0（宁可选不到也不选错）
+
     tier = str(candidate.get("tier") or "").strip()
     expected = task_type_tier_expectation(task_type)
     matched = (len(expected) == 0) or (tier in expected)
@@ -691,6 +716,13 @@ def route_with_utility(
                 health_score=health_score,
             ):
                 continue
+
+        # 能力硬过滤：quality_fit == 0.0 表示该候选不具备任务所需能力
+        # （例如 image/vision 任务遇到纯文本模型），直接剔除，避免后续
+        # min-max 归一化把「全部 0 分」拉回 1.0 后被 cost/latency 选上。
+        task_type = str(_task_value(task, "task_type", "") or "")
+        if quality_fit(task_type, candidate) <= 0.0:
+            continue
 
         prepared.append((idx, candidate))
 

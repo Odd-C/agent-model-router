@@ -136,6 +136,43 @@ def _default_health(candidate: dict) -> dict[str, float]:
     return {"p50": 200.0, "p95": 400.0, "failure_risk": 0.04}
 
 
+def _has_vision_capability(candidate: dict) -> bool:
+    """候选是否具备视觉能力（scenarios 或 role 含 vision/image）。"""
+    scenarios = candidate.get("scenarios") or []
+    if isinstance(scenarios, str):
+        scenarios = [scenarios]
+    scenario_keys = {str(s).strip().lower() for s in scenarios if str(s).strip()}
+    role = str(candidate.get("role") or "").lower()
+    return (
+        "vision" in scenario_keys
+        or "image" in scenario_keys
+        or "vision" in role
+        or "image" in role
+    )
+
+
+def _synthetic_vision_candidate(cost: str, quota_cap: int) -> dict:
+    """基准专用合成视觉候选，避免默认画像全部为文本模型时 image 任务无候选。"""
+    suffix = "free" if cost == "free" else "paid"
+    cand = {
+        "id": f"bench-vision-{suffix}",
+        "provider": "bench",
+        "tier": "B+",
+        "capability": 0.85,
+        "cost": cost,
+        "role": f"{cost}-vision",
+        "fallback_chain": [],
+        "scenarios": ["vision", "image"],
+        "label": f"Bench Vision ({cost} synthetic)",
+        "health": {"p50": 180.0, "p95": 400.0, "failure_risk": 0.02},
+    }
+    if cost == "free":
+        cand["quota_per_window"] = int(quota_cap)
+    else:
+        cand["quota_per_window"] = None
+    return cand
+
+
 def _prepare_candidates(cfg: BenchmarkConfig) -> list[dict]:
     """准备候选画像列表（缺省用默认模型集），并注入模拟健康档案。"""
     if cfg.candidates is None:
@@ -172,6 +209,14 @@ def _prepare_candidates(cfg: BenchmarkConfig) -> list[dict]:
             merged.update({k: float(v) for k, v in health.items() if k in ("p50", "p95", "failure_risk")})
             cand["health"] = merged
         candidates.append(cand)
+
+    # image/vision 任务需要视觉候选；默认模型集是纯文本画像时，补合成
+    # 视觉候选，避免 utility 策略因能力校验而全军覆没（宁缺毋滥在真实
+    # 路由中正确，但 benchmark 需要可比的候选池）。
+    task_types = {str(t).strip().lower() for t in (cfg.task_types or ())}
+    if task_types & {"image", "vision"} and not any(_has_vision_capability(c) for c in candidates):
+        candidates.append(_synthetic_vision_candidate("free", cfg.quota_cap))
+        candidates.append(_synthetic_vision_candidate("paid", cfg.quota_cap))
     return candidates
 
 

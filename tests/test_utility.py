@@ -120,6 +120,60 @@ class UtilityComponentTests(unittest.TestCase):
         self.assertEqual(deadline_pressure(4600.0, now=1000.0), 0.0)
 
 
+class ImageVisionCapabilityTests(unittest.TestCase):
+    """image/vision 任务必须做视觉能力校验，纯文本模型不得参与路由。"""
+
+    def _text_model(self, model="deepseek-v4-flash", tier="A"):
+        return make_candidate(
+            model=model,
+            provider="deepseek",
+            tier=tier,
+            cost="free",
+            scenarios=["simple", "daily", "complex"],
+            role="text",
+        )
+
+    def _vision_model(self, model="glm-4.6v-flash", tier="B+"):
+        return make_candidate(
+            model=model,
+            provider="zhipu",
+            tier=tier,
+            cost="free",
+            scenarios=["vision"],
+            role="free-vision",
+        )
+
+    def test_image_task_rejects_text_model(self):
+        self.assertEqual(quality_fit("image", self._text_model()), 0.0)
+
+    def test_image_task_accepts_vision_model(self):
+        self.assertGreaterEqual(quality_fit("image", self._vision_model()), 0.9)
+
+    def test_coding_task_unaffected(self):
+        self.assertEqual(quality_fit("coding", self._text_model()), 0.9)
+
+    def test_route_image_prefers_vision(self):
+        task = {"task_type": "image", "priority": "normal", "deadline": None}
+        result = route_with_utility(
+            task,
+            [self._text_model(), self._vision_model()],
+            preferences=FakePreferences(dict(DEFAULT_WEIGHTS["balanced"])),
+        )
+        self.assertEqual(result["model"], "glm-4.6v-flash")
+        self.assertEqual(result["provider"], "zhipu")
+
+    def test_route_image_all_text_returns_none(self):
+        task = {"task_type": "image", "priority": "normal", "deadline": None}
+        result = route_with_utility(
+            task,
+            [self._text_model(model="text-model-a"), self._text_model(model="text-model-b")],
+            preferences=FakePreferences(dict(DEFAULT_WEIGHTS["balanced"])),
+        )
+        self.assertEqual(result["model"], "")
+        self.assertEqual(result["provider"], "")
+        self.assertEqual(result["reason"], "no candidates")
+
+
 class UtilityScoreTests(unittest.TestCase):
     def test_utility_score_breakdown_and_formula(self):
         candidate = make_candidate(
