@@ -1,4 +1,4 @@
-"""model_scheduler.task — v0.3 任务模型与 JSON 持久化。
+"""model_scheduler.task — 任务模型与 StateStore 持久化。
 
 任务模型保持「干净」：只描述「做什么 + 何时能做 + 优先级」，不描述
 「怎么做」。`payload` 是不透明 dict，scheduler 永不解析，只有 Executor 解释。
@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .policy import atomic_write_json, default_state_dir
+from .policy import default_state_dir
+from .store import StateStore, create_store
 
 logger = logging.getLogger(__name__)
 
@@ -141,27 +142,36 @@ def _optional_float(value: Any) -> float | None:
 
 
 class TaskStore:
-    """单进程 JSON 任务存储。
+    """任务存储。
 
-    状态文件位于 state 目录下的 ``model-tasks.json``。写盘复用
-    ``policy.atomic_write_json``（tmp + fsync + os.replace）。
-    所有公开方法由 ``threading.Lock`` 保护；单进程内并发安全。
-    多进程/多实例并发不保证（也没有分布式锁）。
+    存储层统一走 StateStore；默认 backend="json" 时行为与 v0.5 完全
+    兼容（状态文件为 state 目录下的 ``model-tasks.json``）。backend="sqlite"
+    时使用 ``model-scheduler.db`` 的 kv 表（全新存储，不迁移旧 JSON 文件）。
+    所有公开方法由 ``threading.Lock`` 保护；单进程内并发安全。SQLite
+    后端依赖 sqlite3 文件锁，可多进程安全使用。
     """
 
-    def __init__(self, state_dir: str | Path | None = None) -> None:
+    def __init__(self, state_dir: str | Path | None = None, *, backend: str = "json") -> None:
         self.state_dir = Path(state_dir).expanduser() if state_dir is not None else default_state_dir()
+        self.backend = str(backend or "json").strip().lower() or "json"
+        self.store: StateStore = create_store(self.backend, self.state_dir)
         self.path = self.state_dir / "model-tasks.json"
         self._lock = threading.Lock()
 
+    @property
+    def backend_name(self) -> str:
+        """当前存储后端名（"json" 或 "sqlite"）。"""
+        return self.store.backend_name
+
     def _load(self) -> dict[str, dict[str, Any]]:
-        """读取原始任务表；文件不存在返回空表。"""
-        if not self.path.exists():
+        """通过 StateStore 读取原始任务表；不存在返回空表。"""
+        raw = self.store.get("model-tasks")
+        if not raw:
             return {}
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
+            data = json.loads(raw)
         except Exception:
-            logger.warning("Failed to load model-tasks.json; treating as empty", exc_info=True)
+            logger.warning("Failed to load model-tasks; treating as empty", exc_info=True)
             return {}
         if not isinstance(data, dict):
             return {}
@@ -172,7 +182,7 @@ class TaskStore:
         return out
 
     def _save(self, data: dict[str, dict[str, Any]]) -> None:
-        atomic_write_json(self.path, data)
+        self.store.set("model-tasks", json.dumps(data, ensure_ascii=False))
 
     def add(self, task: Task) -> Task:
         """新增任务；task_id 已存在或初始状态非法时抛出 ValueError。"""

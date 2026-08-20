@@ -190,5 +190,99 @@ class TaskStoreTests(unittest.TestCase):
         self.assertIn("a", data)
 
 
+class TaskStoreSQLiteTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.state_dir = Path(self._tmp.name)
+        self.store = TaskStore(self.state_dir, backend="sqlite")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_backend_name(self):
+        self.assertEqual(self.store.backend_name, "sqlite")
+
+    def test_add_get_update_remove(self):
+        task = make_task("a")
+        self.store.add(task)
+        self.assertEqual(self.store.get("a").task_id, "a")
+        self.assertIsNone(self.store.get("missing"))
+
+        task.status = "running"
+        self.store.update(task)
+        self.assertEqual(self.store.get("a").status, "running")
+
+        removed = self.store.remove("a")
+        self.assertEqual(removed.status, "running")
+        self.assertIsNone(self.store.get("a"))
+        self.assertIsNone(self.store.remove("a"))
+
+    def test_list_filters_and_paginates(self):
+        for i in range(5):
+            task = make_task(task_id=f"t{i}", status="queued" if i % 2 == 0 else "deferred")
+            task.task_type = "text" if i < 4 else "coding"
+            task.created_at = float(i)
+            self.store.add(task)
+
+        queued = self.store.list(status="queued", limit=None)
+        self.assertEqual([t.task_id for t in queued], ["t0", "t2", "t4"])
+
+        coding = self.store.list(task_type="coding", limit=None)
+        self.assertEqual([t.task_id for t in coding], ["t4"])
+
+        page = self.store.list(status="queued", offset=1, limit=1)
+        self.assertEqual([t.task_id for t in page], ["t2"])
+
+    def test_persistence_roundtrip(self):
+        self.store.add(make_task("p1", status="deferred", defer_until=1200.0))
+        store2 = TaskStore(self.state_dir, backend="sqlite")
+        self.assertEqual(store2.get("p1").status, "deferred")
+        self.assertEqual(store2.get("p1").defer_until, 1200.0)
+
+    def test_sqlite_backend_does_not_create_json_file(self):
+        self.store.add(make_task("a"))
+        self.assertFalse((self.state_dir / "model-tasks.json").exists())
+        self.assertTrue((self.state_dir / "model-scheduler.db").exists())
+
+
+class TaskStoreBackendParityTests(unittest.TestCase):
+    def test_json_and_sqlite_same_operations_same_results(self):
+        results = {}
+        for backend in ("json", "sqlite"):
+            with tempfile.TemporaryDirectory() as tmp:
+                state_dir = Path(tmp)
+                store = TaskStore(state_dir, backend=backend)
+
+                t1 = make_task("t1", status="queued")
+                t1.task_type = "text"
+                t1.created_at = 1.0
+                store.add(t1)
+
+                t2 = make_task("t2", status="deferred", defer_until=1500.0)
+                t2.task_type = "coding"
+                t2.created_at = 2.0
+                store.add(t2)
+
+                t3 = make_task("t3", status="queued")
+                t3.task_type = "text"
+                t3.created_at = 3.0
+                store.add(t3)
+
+                updated = store.get("t1")
+                updated.status = "running"
+                store.update(updated)
+
+                store.remove("t3")
+
+                results[backend] = {
+                    "list": [t.to_dict() for t in store.list(limit=None)],
+                    "t1": store.get("t1").to_dict(),
+                    "t2": store.get("t2").to_dict(),
+                    "missing": store.get("missing"),
+                }
+
+        self.assertEqual(results["json"], results["sqlite"])
+
+
 if __name__ == "__main__":
     unittest.main()
