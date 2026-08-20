@@ -42,6 +42,7 @@ DEFAULT_MODEL_POLICIES: dict[str, dict[str, Any]] = {
         "id": "gpt-4o",
         "provider": "openai",
         "tier": "S",
+        "capability": 1.0,
         "cost": "paid",
         "quota_per_window": None,
         "peak_safe": True,
@@ -54,6 +55,7 @@ DEFAULT_MODEL_POLICIES: dict[str, dict[str, Any]] = {
         "id": "gpt-4o-mini",
         "provider": "openai",
         "tier": "A",
+        "capability": 0.7,
         "cost": "paid",
         "quota_per_window": None,
         "peak_safe": True,
@@ -66,6 +68,7 @@ DEFAULT_MODEL_POLICIES: dict[str, dict[str, Any]] = {
         "id": "deepseek-chat",
         "provider": "deepseek",
         "tier": "A-",
+        "capability": 0.6,
         "cost": "free",
         "quota_per_window": 500,
         "peak_safe": True,
@@ -78,6 +81,7 @@ DEFAULT_MODEL_POLICIES: dict[str, dict[str, Any]] = {
         "id": "gemini-2.0-flash",
         "provider": "google",
         "tier": "B+",
+        "capability": 0.8,
         "cost": "free",
         "quota_per_window": 1500,
         "peak_safe": True,
@@ -93,6 +97,7 @@ DEFAULT_MODEL_POLICIES: dict[str, dict[str, Any]] = {
         "id": "claude-3-5-sonnet",
         "provider": "anthropic",
         "tier": "S+",
+        "capability": 0.95,
         "cost": "free",
         "quota_per_window": 500,
         "peak_safe": True,
@@ -216,6 +221,7 @@ def _normalise_entry(key, item) -> dict | None:
     entry["id"] = mid
     entry["provider"] = prov
     entry.setdefault("tier", "")
+    entry.setdefault("capability", 0.5)
     entry.setdefault("cost", "paid")
     entry.setdefault("quota_per_window", None)
     entry.setdefault("peak_safe", True)
@@ -227,6 +233,10 @@ def _normalise_entry(key, item) -> dict | None:
 
     entry["enabled"] = False if str(entry.get("enabled") or "").lower() in ("false", "0", "no", "off") else bool(entry.get("enabled", True))
     entry["tier"] = str(entry.get("tier") or "").strip()
+    try:
+        entry["capability"] = max(0.0, min(1.0, float(entry.get("capability", 0.5))))
+    except (TypeError, ValueError):
+        entry["capability"] = 0.5
     entry["cost"] = "free" if str(entry.get("cost") or "").strip().lower() == "free" else "paid"
     entry["peak_safe"] = bool(entry.get("peak_safe", True))
 

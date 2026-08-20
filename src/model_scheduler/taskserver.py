@@ -31,7 +31,7 @@ from .scheduler import (
 )
 from .task import VALID_PRIORITIES, VALID_STATUSES, Task, TaskStore
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +200,7 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
-        server_version = "model-scheduler-taskserver/0.3.1"
+        server_version = "model-scheduler-taskserver/0.4.0"
 
         def log_message(self, fmt: str, *args: Any) -> None:
             logger.debug("%s - %s", self.address_string(), fmt % args)
@@ -727,7 +727,7 @@ tr:hover td { background: rgba(128, 128, 128, .06); }
 <div class="container">
   <header class="page-header">
     <h1>Opportunistic Scheduling</h1>
-    <p>机会型调度：利用空闲资源窗口执行非紧急任务。版本 0.3.1</p>
+    <p>机会型调度：利用空闲资源窗口执行非紧急任务。版本 0.4.0</p>
   </header>
 
   <section>
@@ -847,7 +847,7 @@ tr:hover td { background: rgba(128, 128, 128, .06); }
   </div>
 
   <div class="message" id="message"></div>
-  <div class="footer">model-scheduler v0.3.1 · Opportunistic Scheduling dashboard · no external resources</div>
+  <div class="footer">model-scheduler v0.4.0 · Opportunistic Scheduling dashboard · no external resources</div>
 </div>
 
 <script>

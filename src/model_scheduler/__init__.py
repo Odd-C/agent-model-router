@@ -1,5 +1,5 @@
 """llm-router: 零依赖的 OpenAI 兼容模型智能调度器。"""
-from . import executor, policy, preferences, quota, router, scheduler, task
+from . import executor, health, policy, preferences, quota, router, scheduler, task, utility
 from .policy import (
     DEFAULT_MODEL_POLICIES,
     QUOTA_WINDOW_SECONDS,
@@ -51,8 +51,10 @@ from .scheduler import (
     DEFAULT_BASE_DELAY,
     DEFAULT_DEADLINE_HORIZON,
     DEFAULT_MAX_RETRIES,
+    DEGRADATION_MATRIX,
     PRIORITY_WEIGHTS,
     TaskScheduler,
+    decide_action,
 )
 from .executor import (
     CommandExecutor,
@@ -67,8 +69,35 @@ from .preferences import (
     Preferences,
     PreferencesStore,
 )
+from .health import (
+    HEALTH_WINDOW_SECONDS,
+    ProviderHealth,
+    health_score,
+    record_result,
+)
+from .utility import (
+    ALL_TIERS,
+    DEADLINE_PRESSURE_HORIZON,
+    DEFAULT_CONSTRAINTS,
+    DEFAULT_FAILURE_RISK,
+    DEFAULT_LATENCY_PENALTY,
+    DEFAULT_TASK_TYPE_TIER_EXPECTATION,
+    LATENCY_P95_FULL_MS,
+    HardConstraints,
+    UtilityScore,
+    cost_penalty,
+    deadline_pressure,
+    failure_risk,
+    latency_penalty,
+    normalize_breakdowns,
+    quality_fit,
+    quota_pressure,
+    route_with_utility,
+    task_type_tier_expectation,
+    utility,
+)
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 __all__ = [
     "ModelPolicy",
@@ -114,7 +143,9 @@ __all__ = [
     "DEFAULT_BASE_DELAY",
     "DEFAULT_DEADLINE_HORIZON",
     "DEFAULT_MAX_RETRIES",
+    "DEGRADATION_MATRIX",
     "PRIORITY_WEIGHTS",
+    "decide_action",
     "Executor",
     "ExecutorResult",
     "MockExecutor",
@@ -131,4 +162,29 @@ __all__ = [
     "scheduler",
     "executor",
     "preferences",
+    "health",
+    "utility",
+    "ProviderHealth",
+    "HEALTH_WINDOW_SECONDS",
+    "record_result",
+    "health_score",
+    "UtilityScore",
+    "utility",
+    "route_with_utility",
+    "normalize_breakdowns",
+    "HardConstraints",
+    "DEFAULT_CONSTRAINTS",
+    "quality_fit",
+    "cost_penalty",
+    "latency_penalty",
+    "failure_risk",
+    "quota_pressure",
+    "deadline_pressure",
+    "task_type_tier_expectation",
+    "DEFAULT_TASK_TYPE_TIER_EXPECTATION",
+    "ALL_TIERS",
+    "DEADLINE_PRESSURE_HORIZON",
+    "LATENCY_P95_FULL_MS",
+    "DEFAULT_LATENCY_PENALTY",
+    "DEFAULT_FAILURE_RISK",
 ]

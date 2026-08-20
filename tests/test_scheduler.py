@@ -7,7 +7,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from model_scheduler.executor import ExecutorResult, MockExecutor
-from model_scheduler.scheduler import TaskScheduler
+from model_scheduler.scheduler import DEGRADATION_MATRIX, TaskScheduler, decide_action
 from model_scheduler.task import Task, TaskStore
 
 
@@ -257,6 +257,38 @@ class SchedulerTickTests(unittest.TestCase):
         self.assertEqual(stored.status, "done")
         self.assertIsNone(stored.last_error)
 
+
+
+class SchedulerDegradationActionTests(unittest.TestCase):
+    """v0.4：失败任务 last_error.action_taken 按降级矩阵分类记录。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.state_dir = Path(self._tmp.name)
+        self.store = TaskStore(self.state_dir)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_tick_failure_action_taken_follows_degradation_matrix(self):
+        for error_type, expected in DEGRADATION_MATRIX.items():
+            with self.subTest(error_type=error_type):
+                task = make_task(f"task-{error_type}")
+                self.store.add(task)
+                executor = MockExecutor(error={"error_type": error_type, "status": None, "message": "boom"})
+                scheduler = TaskScheduler(self.store, executor, max_retries=3)
+
+                scheduler.tick(now=2000.0)
+
+                stored = self.store.get(task.task_id)
+                self.assertEqual(stored.last_error["error_type"], error_type)
+                self.assertEqual(stored.last_error["action_taken"], expected)
+                # v0.3 状态机/重试语义不变：失败后仍回到 queued 等待重试。
+                self.assertEqual(stored.status, "queued")
+
+    def test_decide_action_unknown_aborts(self):
+        self.assertEqual(decide_action("unknown_error"), "abort")
+        self.assertEqual(decide_action(None), "abort")
 
 if __name__ == "__main__":
     unittest.main()

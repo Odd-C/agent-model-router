@@ -22,6 +22,29 @@ DEFAULT_MAX_RETRIES = 3
 DEFAULT_DEADLINE_HORIZON = 3600.0  # 1 小时内到期视为紧急，立即排队
 PRIORITY_WEIGHTS = {"high": 0.0, "normal": 1.0, "low": 2.0}
 
+# v0.4 降级矩阵：error_type -> 失败路径 action_taken。
+# 只改变 last_error.action_taken 的记录语义；状态机、defer 决策与
+# max_retries 重试上限保持 v0.3 行为不变。
+DEGRADATION_MATRIX = {
+    "invalid_payload": "abort",
+    "auth_error": "abort",
+    "invalid_request": "abort",
+    "rate_limit": "cooldown_retry",
+    "server_error": "retry_then_fallback",
+    "transport_error": "retry_then_fallback",
+    "timeout": "retry_then_fallback",
+    "model_not_found": "fallback",
+}
+
+
+def decide_action(error_type: str) -> str:
+    """根据 error_type 返回降级矩阵规定的 action_taken。
+
+    未识别的 error_type 保守返回 "abort"（不重试）。
+    """
+    key = str(error_type or "").strip().lower()
+    return DEGRADATION_MATRIX.get(key, "abort")
+
 
 def _normalise_now(now: float | None) -> float:
     """把 None / datetime / epoch 统一成 epoch 秒。"""
@@ -206,10 +229,11 @@ class TaskScheduler:
                 task.status = "failed"
             task.attempts += 1
             error = exec_result.error if isinstance(exec_result.error, dict) else {"message": str(exec_result.error)}
+            error_type = str(error.get("error_type") or "unknown_error")
             task.last_error = {
-                "error_type": str(error.get("error_type") or "unknown_error"),
+                "error_type": error_type,
                 "status": error.get("status"),
-                "action_taken": "abort",
+                "action_taken": decide_action(error_type),
                 "message": str(error.get("message") or ""),
             }
             task.result = None
@@ -270,6 +294,8 @@ __all__ = [
     "DEFAULT_BASE_DELAY",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_DEADLINE_HORIZON",
+    "DEGRADATION_MATRIX",
     "PRIORITY_WEIGHTS",
     "TaskScheduler",
+    "decide_action",
 ]
