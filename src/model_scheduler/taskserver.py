@@ -33,7 +33,7 @@ from .scheduler import (
 )
 from .task import VALID_PRIORITIES, VALID_STATUSES, Task, TaskStore
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8080
 DEFAULT_STATE_DIR = Path.home() / ".hermes" / "webui"
 PAGE_SIZE = 20
+MAX_BODY_BYTES = 1024 * 1024  # 1MB 请求体上限
 
 # 对外 API 返回的 task 字段契约（不包含 payload，避免把大字段塞进列表）。
 TASK_FIELDS = (
@@ -208,7 +209,7 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
-        server_version = "model-scheduler-taskserver/0.6.0"
+        server_version = "model-scheduler-taskserver/0.6.1"
 
         def log_message(self, fmt: str, *args: Any) -> None:
             logger.debug("%s - %s", self.address_string(), fmt % args)
@@ -228,7 +229,7 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
         def _dispatch(self, method: str) -> None:
             try:
                 self._route(method)
-            except Exception as exc:
+            except Exception:
                 logger.exception("request failed: %s %s", method, self.path)
                 try:
                     self._send_json(
@@ -237,7 +238,6 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                             "error": {
                                 "message": "internal server error",
                                 "type": "model_scheduler.internal_error",
-                                "detail": str(exc),
                             }
                         },
                     )
@@ -538,6 +538,9 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
             if length <= 0:
                 self._send_error(400, "request body must be a JSON object", "model_scheduler.invalid_json")
                 return None
+            if length > MAX_BODY_BYTES:
+                self._send_error(413, "request body too large", "model_scheduler.payload_too_large")
+                return None
             raw = self.rfile.read(length)
             try:
                 data = json.loads(raw.decode("utf-8"))
@@ -814,7 +817,7 @@ tr:hover td { background: rgba(128, 128, 128, .06); }
 <div class="container">
   <header class="page-header">
     <h1>Opportunistic Scheduling</h1>
-    <p>机会型调度：利用空闲资源窗口执行非紧急任务。版本 0.6.0</p>
+    <p>机会型调度：利用空闲资源窗口执行非紧急任务。版本 0.6.1</p>
   </header>
 
   <section>
@@ -942,7 +945,7 @@ tr:hover td { background: rgba(128, 128, 128, .06); }
   </div>
 
   <div class="message" id="message"></div>
-  <div class="footer">model-scheduler v0.6.0 · Opportunistic Scheduling dashboard · no external resources</div>
+  <div class="footer">model-scheduler v0.6.1 · Opportunistic Scheduling dashboard · no external resources</div>
 </div>
 
 <script>

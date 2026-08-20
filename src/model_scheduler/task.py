@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -123,10 +124,17 @@ class Task:
             raise ValueError(f"invalid priority: {self.priority!r}")
         if self.status not in VALID_STATUSES:
             raise ValueError(f"invalid status: {self.status!r}")
+        if not isinstance(self.task_type, str) or not self.task_type.strip():
+            raise ValueError("task_type must be a non-empty string")
+        if not isinstance(self.payload, dict):
+            raise ValueError("payload must be a dict")
         for field_name, value in (("deadline", self.deadline), ("defer_until", self.defer_until)):
             if value is not None:
-                if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
                     raise ValueError(f"{field_name} must be a positive number or None")
+                numeric = float(value)
+                if not math.isfinite(numeric) or numeric <= 0:
+                    raise ValueError(f"{field_name} must be a positive finite number or None")
         if self.last_error is not None:
             if not isinstance(self.last_error, dict):
                 raise ValueError("last_error must be a dict or None")
@@ -141,14 +149,37 @@ def _optional_float(value: Any) -> float | None:
     return float(value)
 
 
+def _parse_tasks(raw: str | None) -> dict[str, dict[str, Any]]:
+    """把 StateStore 中的任务表 JSON 字符串解析为 dict；异常/非法结构返回空表。"""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except Exception:
+        logger.warning("Failed to load model-tasks; treating as empty", exc_info=True)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            out[str(key)] = value
+    return out
+
+
 class TaskStore:
     """任务存储。
 
     存储层统一走 StateStore；默认 backend="json" 时行为与 v0.5 完全
     兼容（状态文件为 state 目录下的 ``model-tasks.json``）。backend="sqlite"
     时使用 ``model-scheduler.db`` 的 kv 表（全新存储，不迁移旧 JSON 文件）。
-    所有公开方法由 ``threading.Lock`` 保护；单进程内并发安全。SQLite
-    后端依赖 sqlite3 文件锁，可多进程安全使用。
+
+    并发语义：
+      - add/update/remove 通过 ``StateStore.atomic_update`` 完成读改写，
+        避免 ``_load()`` + ``_save()`` 两步操作之间的并发丢失。
+      - JSON 后端：atomic_update 由 ``threading.Lock`` 保护，仅单进程内安全。
+      - SQLite 后端：atomic_update 在 ``BEGIN IMMEDIATE`` 事务内完成，
+        借助 sqlite3 文件锁实现跨进程安全（多进程可安全使用）。
     """
 
     def __init__(self, state_dir: str | Path | None = None, *, backend: str = "json") -> None:
@@ -165,37 +196,30 @@ class TaskStore:
 
     def _load(self) -> dict[str, dict[str, Any]]:
         """通过 StateStore 读取原始任务表；不存在返回空表。"""
-        raw = self.store.get("model-tasks")
-        if not raw:
-            return {}
-        try:
-            data = json.loads(raw)
-        except Exception:
-            logger.warning("Failed to load model-tasks; treating as empty", exc_info=True)
-            return {}
-        if not isinstance(data, dict):
-            return {}
-        out: dict[str, dict[str, Any]] = {}
-        for key, value in data.items():
-            if isinstance(value, dict):
-                out[str(key)] = value
-        return out
+        return _parse_tasks(self.store.get("model-tasks"))
 
     def _save(self, data: dict[str, dict[str, Any]]) -> None:
         self.store.set("model-tasks", json.dumps(data, ensure_ascii=False))
 
     def add(self, task: Task) -> Task:
-        """新增任务；task_id 已存在或初始状态非法时抛出 ValueError。"""
+        """新增任务；task_id 已存在或初始状态非法时抛出 ValueError。
+
+        使用 ``store.atomic_update`` 完成「读取 -> 存在性检查 -> 写回」，
+        与进程内其它写操作以及 SQLite 后端的跨进程写操作互斥。
+        """
         task.validate()
         if task.status not in ("queued", "deferred"):
             raise ValueError(f"invalid initial status: {task.status!r} (must be queued or deferred)")
-        with self._lock:
-            data = self._load()
+
+        def mutator(raw: str | None) -> str:
+            data = _parse_tasks(raw)
             if task.task_id in data:
                 raise ValueError(f"task already exists: {task.task_id}")
             data[task.task_id] = task.to_dict()
-            self._save(data)
-            return task
+            return json.dumps(data, ensure_ascii=False)
+
+        self.store.atomic_update("model-tasks", mutator)
+        return task
 
     def get(self, task_id: str) -> Task | None:
         """按 task_id 读取；不存在返回 None。"""
@@ -249,37 +273,52 @@ class TaskStore:
         return tasks[offset:offset + limit]
 
     def update(self, task: Task) -> Task:
-        """更新任务；task_id 不存在时抛出 KeyError，非法状态迁移抛 ValueError。"""
+        """更新任务；task_id 不存在时抛出 KeyError，非法状态迁移抛 ValueError。
+
+        存在性检查与迁移校验在 atomic_update 的 mutator 内完成，避免
+        并发 tick / cancel 之间出现 list -> update 的丢失更新或双执行。
+        """
         task.validate()
-        old_task = self.get(task.task_id)
-        if old_task is None:
-            raise KeyError(f"task not found: {task.task_id}")
-        if not valid_transition(old_task.status, task.status):
-            raise ValueError(f"invalid transition: {old_task.status} -> {task.status}")
-        with self._lock:
-            data = self._load()
+
+        def mutator(raw: str | None) -> str:
+            data = _parse_tasks(raw)
             if task.task_id not in data:
                 raise KeyError(f"task not found: {task.task_id}")
+            old_status = data[task.task_id].get("status")
+            if not valid_transition(old_status, task.status):
+                raise ValueError(f"invalid transition: {old_status} -> {task.status}")
             data[task.task_id] = task.to_dict()
-            self._save(data)
-            return task
+            return json.dumps(data, ensure_ascii=False)
+
+        self.store.atomic_update("model-tasks", mutator)
+        return task
 
     def remove(self, task_id: str) -> Task | None:
         """删除任务并返回被删除的 Task；不存在返回 None。"""
         task_id = str(task_id or "").strip()
         if not task_id:
             return None
-        with self._lock:
-            data = self._load()
-            raw = data.pop(task_id, None)
-            if raw is None:
+
+        removed: dict[str, Any] = {}
+
+        def mutator(raw: str | None) -> str | None:
+            data = _parse_tasks(raw)
+            raw_task = data.pop(task_id, None)
+            if raw_task is None:
                 return None
-            self._save(data)
-            try:
-                return Task.from_dict(raw)
-            except ValueError:
-                logger.warning("Removed invalid task data for %s", task_id, exc_info=True)
-                return None
+            removed["task"] = raw_task
+            return json.dumps(data, ensure_ascii=False)
+
+        self.store.atomic_update("model-tasks", mutator)
+
+        raw_task = removed.get("task")
+        if raw_task is None:
+            return None
+        try:
+            return Task.from_dict(raw_task)
+        except ValueError:
+            logger.warning("Removed invalid task data for %s", task_id, exc_info=True)
+            return None
 
 
 __all__ = [

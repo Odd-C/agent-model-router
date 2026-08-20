@@ -7,6 +7,7 @@ scheduler 只做「任务 + 模型 + 时间窗口」的状态机调度；模型�
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 import uuid
@@ -86,12 +87,13 @@ class TaskScheduler:
         self.base_delay = float(base_delay)
         self.max_retries = int(max_retries)
         self.deadline_horizon = float(deadline_horizon)
-        if self.base_delay < 0:
-            raise ValueError("base_delay must be non-negative")
+        if not math.isfinite(self.base_delay) or self.base_delay < 0:
+            raise ValueError("base_delay must be a finite non-negative number")
         if self.max_retries < 0:
             raise ValueError("max_retries must be non-negative")
-        if self.deadline_horizon < 0:
-            raise ValueError("deadline_horizon must be non-negative")
+        if not math.isfinite(self.deadline_horizon) or self.deadline_horizon < 0:
+            raise ValueError("deadline_horizon must be a finite non-negative number")
+        self._tick_lock = threading.Lock()
 
     def submit(
         self,
@@ -110,8 +112,8 @@ class TaskScheduler:
             if isinstance(deadline, bool) or not isinstance(deadline, (int, float)):
                 raise ValueError("deadline must be a number or None")
             deadline = float(deadline)
-            if deadline <= 0:
-                raise ValueError("deadline must be a positive number or None")
+            if not math.isfinite(deadline) or deadline <= 0:
+                raise ValueError("deadline must be a positive finite number or None")
 
         defer_until: float | None
         expired = deadline is not None and deadline <= now
@@ -158,19 +160,29 @@ class TaskScheduler:
         1) deferred 到点 -> queued；
         2) 遍历 queued -> 执行 -> done/failed（按重试上限回 queued，超限 cancelled）。
         返回本轮处理过的任务 id 列表（含被转 queued 的 deferred 任务）。
+
+        单进程内由 ``_tick_lock`` 串行化，避免两个线程同时 tick 时
+        list -> update 序列交叉导致非法迁移或重复执行；跨进程并发写由
+        TaskStore 的 SQLite atomic_update 兜底。
         """
+        with self._tick_lock:
+            return self._tick_locked(now)
+
+    def _tick_locked(self, now: float | None = None) -> list[str]:
+        """tick 的主体逻辑；调用方必须持有 ``_tick_lock``。"""
         now = _normalise_now(now)
         processed: list[str] = []
 
         # 0. 到期的 queued/deferred 任务置 expired。
+        #    统一使用 deadline <= now：deadline 恰为 now 时视为已过期。
         for task in self.store.list(status="queued", limit=None):
-            if task.deadline is not None and float(task.deadline) < now:
+            if task.deadline is not None and float(task.deadline) <= now:
                 task.status = "expired"
                 task.updated_at = now
                 self.store.update(task)
                 processed.append(task.task_id)
         for task in self.store.list(status="deferred", limit=None):
-            if task.deadline is not None and float(task.deadline) < now:
+            if task.deadline is not None and float(task.deadline) <= now:
                 task.status = "expired"
                 task.updated_at = now
                 self.store.update(task)

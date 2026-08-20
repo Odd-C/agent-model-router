@@ -5,9 +5,11 @@
 
 文件形状：
     {model@provider: {calls, failures, status_counts, latency_samples, updated_at}}
-其中 ``latency_samples`` 为滑动窗口内的逐次采样
-``[{"ts": epoch, "status": status, "latency_ms": ms}, ...]``，
-``calls/failures/status_counts`` 为累计统计（归档用途）。
+其中 ``latency_samples`` 为滑动窗口内的逐次调用采样
+``[{"ts": epoch, "status": status, "latency_ms": ms | null}, ...]``；
+``latency_ms`` 为 null 表示该次调用缺失延迟样本，只参与调用/失败统计，
+不参与 p50/p95 延迟分位计算。``calls/failures/status_counts`` 为累计
+统计（归档用途）。
 """
 from __future__ import annotations
 
@@ -161,7 +163,8 @@ class ProviderHealth:
         now = _normalise_now(ts)
         key = f"{mid}@{prov}" if prov else mid
         status = _normalise_status(status)
-        latency = _latency_ms(latency_ms)
+        # 缺失 latency 样本时保留 None，后续只计调用/失败统计，不进入延迟分位。
+        latency = None if latency_ms is None else _latency_ms(latency_ms)
 
         with self._lock:
             data = self._load()
@@ -232,7 +235,11 @@ class ProviderHealth:
                 "failure_risk": 0.2,
             }
 
-        latencies = sorted(_latency_ms(s.get("latency_ms")) for s in recent)
+        latencies = sorted(
+            _latency_ms(s.get("latency_ms"))
+            for s in recent
+            if s.get("latency_ms") is not None
+        )
         failures = sum(1 for s in recent if _is_failure_status(s.get("status")))
         total = len(recent)
         success_rate = max(0.0, min(1.0, (total - failures) / total))

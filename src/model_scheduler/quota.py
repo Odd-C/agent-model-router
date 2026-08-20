@@ -184,8 +184,13 @@ class QuotaTracker:
             return 0.0
 
     def record_call(self, model_id, provider, ts=None) -> None:
-        """记录一次模型调用。只对免费模型有实际影响。"""
-        mid = str(model_id or "").strip()
+        """记录一次模型调用。只对免费模型有实际影响。
+
+        与 ``record_failure`` 一样先做 ``_normalise_model`` 规范化，支持
+        ``@provider:model`` 形式的 model_id。
+        """
+        mid, prov_from_model = _normalise_model(model_id)
+        prov = str(provider or prov_from_model or "").strip()
         if not mid:
             return
         now = _normalise_now(ts)
@@ -194,7 +199,7 @@ class QuotaTracker:
             calls = self._load_calls()
             cutoff = now - WINDOW_SECONDS
             calls = [c for c in calls if _ts(c) >= cutoff]
-            calls.append({"model": mid, "provider": str(provider or ""), "ts": now})
+            calls.append({"model": mid, "provider": prov, "ts": now})
             self._save_calls(calls)
 
     def quota_left(self, model_id, provider, now=None) -> int:
@@ -294,3 +299,16 @@ def record_failure(model_id, provider=None, ts=None, reason=None, status=None) -
 
 def cooldown_seconds_left(model_id, provider=None, now=None) -> float:
     return _get_tracker().cooldown_seconds_left(model_id, provider, now)
+
+
+__all__ = [
+    "COOLDOWN_SECONDS",
+    "WINDOW_SECONDS",
+    "QuotaTracker",
+    "cooldown_seconds_left",
+    "quota_left",
+    "quota_table_left",
+    "record_call",
+    "record_failure",
+    "reset_if_needed",
+]

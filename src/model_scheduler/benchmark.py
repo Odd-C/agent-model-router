@@ -694,5 +694,17 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+__all__ = [
+    "BENCHMARK_BASE_NOW",
+    "BenchmarkConfig",
+    "BenchmarkResult",
+    "format_report",
+    "generate_tasks",
+    "main",
+    "run_benchmark",
+    "simulate_route",
+]
+
+
 if __name__ == "__main__":
     sys.exit(main())

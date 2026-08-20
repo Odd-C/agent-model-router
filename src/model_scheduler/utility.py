@@ -18,6 +18,7 @@ raw / normalized / weighted 三层 breakdown，让「为什么选 A 不选 B」�
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -119,10 +120,16 @@ class HardConstraints:
                     q = None
             if q is not None:
                 try:
-                    if float(q) <= float(self.min_quota_left):
-                        return False
+                    q_value = float(q)
                 except (TypeError, ValueError):
-                    pass
+                    q_value = None
+                if q_value is not None:
+                    # quota_left 为负值（如 -1）表示“未知/不受限”，放行；
+                    # 只有真实额度数字才参与耗尽判定。
+                    if q_value < 0:
+                        pass
+                    elif q_value <= float(self.min_quota_left):
+                        return False
 
         # 3) 冷却中排除。
         if self.exclude_in_cooldown:
@@ -387,6 +394,9 @@ def quota_pressure(candidate: dict, quota_left: int | float | None = None) -> fl
         quota_left = float(quota_left)
     except (TypeError, ValueError):
         return 0.0
+    if quota_left < 0:
+        # -1 等负值表示“未知/不受限”，不产生额度压力。
+        return 0.0
 
     ratio = _clamp(max(0.0, quota_left) / float(quota_per_window))
     return 1.0 - ratio
@@ -410,12 +420,23 @@ def deadline_pressure(deadline: float | None, now=None) -> float:
 
 
 def _effective_weights(weights: dict[str, float]) -> dict[str, float]:
-    """把调用方权重补全为六个分项的有效权重。"""
+    """把调用方权重补全为六个分项的有效权重。
+
+    非法值（无法转换为 float 或非有限数）抛出 ValueError，避免 TypeError
+    泄漏给调用方。
+    """
     weights = dict(weights or {})
-    return {
-        key: float(weights.get(key, DEFAULT_WEIGHTS["balanced"].get(key, 1.0)))
-        for key in WEIGHT_KEYS
-    }
+    effective: dict[str, float] = {}
+    for key in WEIGHT_KEYS:
+        raw = weights.get(key, DEFAULT_WEIGHTS["balanced"].get(key, 1.0))
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid weight for {key}: {raw!r}") from exc
+        if not math.isfinite(value):
+            raise ValueError(f"invalid weight for {key}: {raw!r}")
+        effective[key] = value
+    return effective
 
 
 def _signed_weighted(raw: dict, safe_weights: dict[str, float]) -> dict[str, float]:

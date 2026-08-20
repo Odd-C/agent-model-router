@@ -4,7 +4,8 @@ v0.6 起，TaskStore 不再直接读写 JSON 文件，而是通过 StateStore �
 接口持久化。value 一律为 JSON 字符串，由调用方负责序列化/反序列化。
 
 - JsonStateStore：兼容现有 ``state_dir/<key>.json`` 文件布局；写盘复用
-  ``policy.atomic_write_json``（tmp + fsync + os.replace），线程安全。
+  ``policy.atomic_write_json``（tmp + fsync + os.replace），线程安全
+  （仅单进程内安全；多进程请使用 SQLite 后端）。
 - SQLiteStateStore：纯 stdlib sqlite3，文件为 ``state_dir/model-scheduler.db``，
   key-value 表结构，线程锁 + 事务。SQLite 自带文件锁，多进程安全
   （写事务串行化；并发写会按 busy timeout 等待）。
@@ -20,7 +21,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Callable, Protocol
 
 from .policy import atomic_write_json, default_state_dir
 
@@ -41,6 +42,14 @@ class StateStore(Protocol):
     def exists(self, key: str) -> bool: ...
 
     def keys(self) -> list[str]: ...
+
+    def atomic_update(self, key: str, mutator: Callable[[Any], Any]) -> Any:
+        """读当前值 -> mutator(value) -> 写回，整个读改写在一个事务/锁内完成。
+
+        ``value`` 为后端存储的 JSON 字符串；key 不存在时为 None。
+        ``mutator`` 返回 None 表示不写回（保持原值不变）。
+        """
+        ...
 
 
 def _validate_key(key: str) -> str:
@@ -125,6 +134,29 @@ class JsonStateStore:
                 for p in self.state_dir.glob("*.json")
                 if p.name.endswith(".json")
             )
+
+    def atomic_update(self, key: str, mutator: Callable[[Any], Any]) -> Any:
+        """在单进程锁内完成读改写；返回 mutator 的结果。
+
+        当前值为 JSON 字符串（key 不存在时为 None）。mutator 返回 None
+        表示不写回；返回其它值时必须是合法 JSON 字符串，按 set 落盘。
+        """
+        path = self._path(key)
+        with self._lock:
+            current = None
+            if path.exists():
+                try:
+                    text = path.read_text(encoding="utf-8")
+                    current = json.dumps(json.loads(text), ensure_ascii=False)
+                except Exception:
+                    logger.warning("Failed to read state file %s", path, exc_info=True)
+                    current = None
+            new_value = mutator(current)
+            if new_value is None:
+                return None
+            _validate_json_value(new_value)
+            atomic_write_json(path, json.loads(new_value))
+            return new_value
 
 
 class SQLiteStateStore:
@@ -219,6 +251,41 @@ class SQLiteStateStore:
             try:
                 rows = conn.execute("SELECT key FROM kv ORDER BY key").fetchall()
                 return [row[0] for row in rows]
+            finally:
+                conn.close()
+
+    def atomic_update(self, key: str, mutator: Callable[[Any], Any]) -> Any:
+        """在 SQLite 写事务（BEGIN IMMEDIATE）内完成读改写；跨进程安全。
+
+        当前值为 JSON 字符串（key 不存在时为 None）。mutator 返回 None
+        表示不写回；返回其它值时必须是合法 JSON 字符串，按 set 落盘。
+        """
+        key = _validate_key(key)
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
+                current = None if row is None else row[0]
+                new_value = mutator(current)
+                if new_value is None:
+                    conn.execute("COMMIT")
+                    return None
+                _validate_json_value(new_value)
+                updated_at = time.time()
+                conn.execute(
+                    "INSERT INTO kv(key, value, updated_at) VALUES(?, ?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                    (key, new_value, updated_at),
+                )
+                conn.execute("COMMIT")
+                return new_value
+            except Exception:
+                try:
+                    conn.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
             finally:
                 conn.close()
 

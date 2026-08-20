@@ -87,7 +87,7 @@ class TaskServerTests(unittest.TestCase):
         status, data = self._request("GET", "/api/health")
         self.assertEqual(status, 200)
         self.assertEqual(data["status"], "ok")
-        self.assertEqual(data["version"], "0.6.0")
+        self.assertEqual(data["version"], "0.6.1")
 
     def test_index_page_contains_title(self):
         status, text, headers = self._request_text("GET", "/")

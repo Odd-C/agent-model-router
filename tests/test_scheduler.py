@@ -238,12 +238,12 @@ class SchedulerTickTests(unittest.TestCase):
         self.assertIn("q-expired", processed)
         self.assertIn("d-expired", processed)
 
-    def test_tick_does_not_expire_when_deadline_equals_now(self):
+    def test_tick_expires_when_deadline_equals_now(self):
         task = make_task("edge", status="queued", deadline=2000.0)
         self.store.add(task)
         scheduler = TaskScheduler(self.store, MockExecutor())
         scheduler.tick(now=2000.0)
-        self.assertEqual(self.store.get("edge").status, "done")
+        self.assertEqual(self.store.get("edge").status, "expired")
 
     def test_success_clears_last_error(self):
         task = make_task("retry-ok")
