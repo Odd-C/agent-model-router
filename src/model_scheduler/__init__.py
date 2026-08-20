@@ -1,5 +1,5 @@
 """llm-router: 零依赖的 OpenAI 兼容模型智能调度器。"""
-from . import executor, health, policy, preferences, quota, router, scheduler, task, utility
+from . import executor, health, policy, policy_compiler, preferences, quota, router, scheduler, task, utility
 from .policy import (
     DEFAULT_MODEL_POLICIES,
     QUOTA_WINDOW_SECONDS,
@@ -75,6 +75,17 @@ from .health import (
     health_score,
     record_result,
 )
+from .policy_compiler import (
+    CAPABILITY_REFERENCES,
+    DEFAULT_MAX_LATENCY_MS,
+    DEFAULT_MIN_QUALITY_TIER,
+    INTENT_RULES,
+    CompiledPolicy,
+    compile_intent,
+    describe,
+    merge_policies,
+    route_with_intent,
+)
 from .utility import (
     ALL_TIERS,
     DEADLINE_PRESSURE_HORIZON,
@@ -97,7 +108,7 @@ from .utility import (
     utility,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "ModelPolicy",
@@ -187,4 +198,14 @@ __all__ = [
     "LATENCY_P95_FULL_MS",
     "DEFAULT_LATENCY_PENALTY",
     "DEFAULT_FAILURE_RISK",
+    "policy_compiler",
+    "CAPABILITY_REFERENCES",
+    "DEFAULT_MAX_LATENCY_MS",
+    "DEFAULT_MIN_QUALITY_TIER",
+    "INTENT_RULES",
+    "CompiledPolicy",
+    "compile_intent",
+    "describe",
+    "merge_policies",
+    "route_with_intent",
 ]

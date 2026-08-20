@@ -14,6 +14,7 @@ import logging
 import math
 import sys
 import time
+from dataclasses import asdict
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -22,7 +23,8 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from .executor import MockExecutor
 from .policy import configure_state_dir, default_state_dir
-from .preferences import PreferencesStore, VALID_MODES
+from .policy_compiler import compile_intent
+from .preferences import Preferences, PreferencesStore, VALID_MODES
 from .scheduler import (
     DEFAULT_BASE_DELAY,
     DEFAULT_DEADLINE_HORIZON,
@@ -31,7 +33,7 @@ from .scheduler import (
 )
 from .task import VALID_PRIORITIES, VALID_STATUSES, Task, TaskStore
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 logger = logging.getLogger(__name__)
 
@@ -183,8 +185,14 @@ class TaskDashboardApp:
             "weights": self.preferences_store.get_effective_weights(),
         }
 
-    def set_preferences_mode(self, mode: str) -> dict[str, Any]:
-        self.preferences_store.set_mode(mode)
+    def set_preferences_mode(self, mode: str, weights: dict[str, float] | None = None) -> dict[str, Any]:
+        """设置 mode，并可选覆盖 weights（None 表示保留已有覆盖，{} 清空覆盖）。"""
+        prefs = self.preferences_store.load()
+        prefs.mode = mode
+        if weights is not None:
+            prefs.weights = weights
+        prefs.validate()
+        self.preferences_store.save(prefs)
         return self.get_preferences()
 
 
@@ -200,7 +208,7 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
-        server_version = "model-scheduler-taskserver/0.4.0"
+        server_version = "model-scheduler-taskserver/0.5.0"
 
         def log_message(self, fmt: str, *args: Any) -> None:
             logger.debug("%s - %s", self.address_string(), fmt % args)
@@ -288,12 +296,26 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                         self._send_error(405, "method not allowed", "model_scheduler.method_not_allowed")
                     return
 
+            if len(parts) == 3 and parts[0] == "api" and parts[1] == "preferences" and parts[2] == "compile":
+                if method == "POST":
+                    self._handle_compile_preferences()
+                else:
+                    self._send_error(405, "method not allowed", "model_scheduler.method_not_allowed")
+                return
+
             if len(parts) == 3 and parts[0] == "api" and parts[1] == "tasks":
                 task_id = parts[2]
                 if method == "GET":
                     self._handle_get_task(task_id)
                 elif method == "DELETE":
                     self._handle_delete_task(task_id)
+                else:
+                    self._send_error(405, "method not allowed", "model_scheduler.method_not_allowed")
+                return
+
+            if len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" and parts[3] == "result":
+                if method == "GET":
+                    self._handle_get_task_result(parts[2])
                 else:
                     self._send_error(405, "method not allowed", "model_scheduler.method_not_allowed")
                 return
@@ -411,6 +433,39 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                 return
             self._send_json(200, _task_to_public(task))
 
+        def _handle_get_task_result(self, task_id: str) -> None:
+            task = self.app.get_task(task_id)
+            if task is None:
+                self._send_error(404, "task not found", "model_scheduler.not_found")
+                return
+
+            result: dict[str, Any] = {
+                "task_id": task.task_id,
+                "status": task.status,
+                "result": task.result,
+                "cost": task.cost,
+                "error": task.last_error,
+                "updated_at": task.updated_at,
+            }
+
+            if task.status not in ("done", "failed", "cancelled"):
+                result["result"] = None
+                result["error"] = None
+                result["pending"] = True
+            else:
+                result["result"] = task.result if task.status == "done" else None
+                if task.status in ("failed", "cancelled"):
+                    if result["error"] is None:
+                        result["error"] = {
+                            "error_type": "task_cancelled" if task.status == "cancelled" else "task_failed",
+                            "status": None,
+                            "message": f"task is {task.status}",
+                        }
+                else:
+                    result["error"] = None
+
+            self._send_json(200, result)
+
         def _handle_cancel_task(self, task_id: str) -> None:
             ok = self.app.cancel_task(task_id)
             self._send_json(200, {"ok": ok})
@@ -441,7 +496,39 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                     "model_scheduler.invalid_mode",
                 )
                 return
-            self._send_json(200, self.app.set_preferences_mode(mode))
+
+            weights = data.get("weights")
+            if weights is not None:
+                try:
+                    weights = Preferences(mode=mode, weights=weights).weights
+                except ValueError as exc:
+                    self._send_error(400, str(exc), "model_scheduler.invalid_preferences")
+                    return
+
+            self._send_json(200, self.app.set_preferences_mode(mode, weights))
+
+        def _handle_compile_preferences(self) -> None:
+            data = self._read_json_object()
+            if data is None:
+                return
+            text = data.get("text")
+            if not isinstance(text, str) or not text.strip():
+                self._send_error(
+                    400,
+                    "text must be a non-empty string",
+                    "model_scheduler.invalid_request",
+                )
+                return
+            compiled = compile_intent(text)
+            self._send_json(
+                200,
+                {
+                    "mode": compiled.mode,
+                    "weights": compiled.weights,
+                    "constraints": asdict(compiled.constraints),
+                    "explanation": compiled.explanation,
+                },
+            )
 
         def _read_json_object(self) -> dict[str, Any] | None:
             try:
@@ -727,7 +814,7 @@ tr:hover td { background: rgba(128, 128, 128, .06); }
 <div class="container">
   <header class="page-header">
     <h1>Opportunistic Scheduling</h1>
-    <p>机会型调度：利用空闲资源窗口执行非紧急任务。版本 0.4.0</p>
+    <p>机会型调度：利用空闲资源窗口执行非紧急任务。版本 0.5.0</p>
   </header>
 
   <section>
@@ -842,12 +929,20 @@ tr:hover td { background: rgba(128, 128, 128, .06); }
         </label>
         <button id="pref-save" type="button">保存</button>
       </div>
+      <div style="margin-top:12px;">
+        <label for="pref-intent">自然语言偏好</label>
+        <textarea id="pref-intent" style="min-height:56px;" placeholder="我要高质量但不要太贵 / 尽快出结果"></textarea>
+      </div>
+      <div class="toolbar" style="margin-top:10px;margin-bottom:0;">
+        <button id="pref-compile" type="button">翻译并应用</button>
+      </div>
+      <div class="message" id="pref-compile-msg" style="margin-top:12px;"></div>
       <div class="weights" id="pref-weights">加载中...</div>
     </section>
   </div>
 
   <div class="message" id="message"></div>
-  <div class="footer">model-scheduler v0.4.0 · Opportunistic Scheduling dashboard · no external resources</div>
+  <div class="footer">model-scheduler v0.5.0 · Opportunistic Scheduling dashboard · no external resources</div>
 </div>
 
 <script>
@@ -866,6 +961,13 @@ tr:hover td { background: rgba(128, 128, 128, .06); }
 
   var state = { status: '', type: '', offset: 0, limit: 20 };
 
+  var DEFAULT_WEIGHTS = {
+    'quality-first': { quality_fit: 3.0, cost_penalty: 1.0, latency_penalty: 1.0, failure_risk: 1.0, quota_pressure: 1.0, deadline_pressure: 1.0 },
+    'cost-first': { quality_fit: 1.0, cost_penalty: 3.0, latency_penalty: 1.0, failure_risk: 1.0, quota_pressure: 1.0, deadline_pressure: 1.0 },
+    'latency-first': { quality_fit: 1.0, cost_penalty: 1.0, latency_penalty: 3.0, failure_risk: 1.0, quota_pressure: 1.0, deadline_pressure: 1.0 },
+    'balanced': { quality_fit: 1.0, cost_penalty: 1.0, latency_penalty: 1.0, failure_risk: 1.0, quota_pressure: 1.0, deadline_pressure: 1.0 }
+  };
+
   function $(sel) { return document.querySelector(sel); }
 
   function esc(value) {
@@ -878,6 +980,36 @@ tr:hover td { background: rgba(128, 128, 128, .06); }
     var el = $('#message');
     el.textContent = text || '';
     el.className = 'message ' + (ok === undefined ? '' : (ok ? 'ok' : 'err'));
+  }
+
+  function setCompileMessage(text, ok) {
+    var el = $('#pref-compile-msg');
+    el.textContent = text || '';
+    el.className = 'message ' + (ok === undefined ? '' : (ok ? 'ok' : 'err'));
+  }
+
+  function weightsDiffer(weights, mode) {
+    var defaults = DEFAULT_WEIGHTS[mode] || DEFAULT_WEIGHTS.balanced;
+    var keys = Object.keys(defaults);
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      if (Number(weights[key]) !== Number(defaults[key])) return true;
+    }
+    return false;
+  }
+
+  function formatConstraints(constraints) {
+    if (!constraints) return '默认约束';
+    var parts = [];
+    if (constraints.cost_max === 'free') parts.push('只用免费模型');
+    if (constraints.cost_max === 'paid') parts.push('只用付费模型');
+    if (constraints.min_quality_tier) parts.push('至少 ' + constraints.min_quality_tier + ' 档');
+    if (constraints.max_latency_ms != null) parts.push('延迟 ≤ ' + constraints.max_latency_ms + 'ms');
+    if (constraints.min_capability_pct != null) parts.push('能力 ≥ ' + (constraints.capability_reference || '参考模型') + ' 的 ' + constraints.min_capability_pct + '%');
+    if (constraints.min_quota_left) parts.push('免费额度至少余 ' + constraints.min_quota_left);
+    if (constraints.max_failure_risk != null) parts.push('失败风险 ≤ ' + constraints.max_failure_risk);
+    if (constraints.deadline_slack_seconds) parts.push('截止前留 ' + constraints.deadline_slack_seconds + 's');
+    return parts.length ? parts.join(' / ') : '默认约束';
   }
 
   function formatTime(epoch) {
@@ -1075,6 +1207,35 @@ tr:hover td { background: rgba(128, 128, 128, .06); }
         setMessage('偏好已保存：' + prefs.mode, true);
       } catch (err) {
         setMessage(err.message, false);
+      }
+    });
+
+    $('#pref-compile').addEventListener('click', async function () {
+      var text = $('#pref-intent').value.trim();
+      if (!text) {
+        setCompileMessage('请输入自然语言偏好', false);
+        return;
+      }
+      var btn = $('#pref-compile');
+      btn.disabled = true;
+      try {
+        var compiled = await api('/api/preferences/compile', { method: 'POST', body: JSON.stringify({ text: text }) });
+        var body = { mode: compiled.mode };
+        if (weightsDiffer(compiled.weights, compiled.mode)) body.weights = compiled.weights;
+
+        var prefs = await api('/api/preferences', { method: 'PUT', body: JSON.stringify(body) });
+        $('#pref-mode').value = compiled.mode;
+        $('#pref-weights').textContent = JSON.stringify(prefs.weights, null, 2);
+
+        var lines = [compiled.explanation, '约束清单：' + formatConstraints(compiled.constraints)];
+        if (body.weights) lines.push('自定义权重：' + JSON.stringify(compiled.weights));
+        setCompileMessage(lines.join('\\n'), true);
+        setMessage('已翻译并应用：' + compiled.mode, true);
+      } catch (err) {
+        setCompileMessage(err.message, false);
+        setMessage(err.message, false);
+      } finally {
+        btn.disabled = false;
       }
     });
   }
