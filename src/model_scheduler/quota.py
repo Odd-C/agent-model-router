@@ -2,7 +2,8 @@
 
 状态文件 model-quota.json：{"calls": [{"model", "provider", "ts"} ...]}
 窗口：5 小时滑动窗口。本地计数只作路由参考，真实额度以提供方 API 为准。
-失败冷却状态文件 model-cooldown.json：{model@provider: failure_ts}。
+失败冷却状态文件 model-cooldown.json：{model@provider: {ts, reason, status, provider}}。
+旧格式（纯时间戳）仍可读取，按 {ts, reason:None, status:None, provider:None} 处理。
 """
 from __future__ import annotations
 
@@ -115,8 +116,19 @@ class QuotaTracker:
     def _save_calls(self, calls: list) -> None:
         policy.atomic_write_json(self.quota_path, {"calls": calls})
 
-    def record_failure(self, model_id, provider=None, ts=None) -> None:
-        """记录一次模型调用失败（429/quota 等），触发路由冷却。"""
+    def record_failure(
+        self,
+        model_id,
+        provider=None,
+        ts=None,
+        reason=None,
+        status=None,
+    ) -> None:
+        """记录一次模型调用失败，触发路由冷却。
+
+        reason/status 用于错误分类：transport_error / rate_limit / server_error 等。
+        400/401/403 等不触发冷却的错误不应调用本方法。
+        """
         mid, prov_from_model = _normalise_model(model_id)
         prov = str(provider or prov_from_model or "").strip()
         if not mid:
@@ -134,7 +146,12 @@ class QuotaTracker:
                         data = {}
                 if not isinstance(data, dict):
                     data = {}
-                data[key] = now
+                data[key] = {
+                    "ts": now,
+                    "reason": reason,
+                    "status": status,
+                    "provider": prov or None,
+                }
                 policy.atomic_write_json(path, data)
         except Exception:
             logger.warning("Failed to record model failure cooldown", exc_info=True)
@@ -153,7 +170,12 @@ class QuotaTracker:
                 if not path.exists():
                     return 0.0
                 data = json.loads(path.read_text(encoding="utf-8"))
-                ts = float(data.get(key, 0) or 0)
+                value = data.get(key, 0)
+                if isinstance(value, dict):
+                    ts = float(value.get("ts", 0) or 0)
+                else:
+                    # 兼容旧格式：{model@provider: failure_ts}
+                    ts = float(value or 0)
                 if ts <= 0:
                     return 0.0
                 remaining = COOLDOWN_SECONDS - (now - ts)
@@ -266,8 +288,8 @@ def quota_table_left(now=None) -> dict:
     return _get_tracker().quota_table_left(now)
 
 
-def record_failure(model_id, provider=None, ts=None) -> None:
-    _get_tracker().record_failure(model_id, provider, ts)
+def record_failure(model_id, provider=None, ts=None, reason=None, status=None) -> None:
+    _get_tracker().record_failure(model_id, provider, ts=ts, reason=reason, status=status)
 
 
 def cooldown_seconds_left(model_id, provider=None, now=None) -> float:

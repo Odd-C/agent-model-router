@@ -1,5 +1,5 @@
 """llm-router: 零依赖的 OpenAI 兼容模型智能调度器。"""
-from . import policy, quota, router
+from . import executor, policy, preferences, quota, router, scheduler, task
 from .policy import (
     DEFAULT_MODEL_POLICIES,
     QUOTA_WINDOW_SECONDS,
@@ -40,8 +40,35 @@ from .router import (
     recommend_for_session,
     route_model,
 )
+from .task import (
+    VALID_PRIORITIES,
+    VALID_STATUSES,
+    Task,
+    TaskStore,
+    valid_transition,
+)
+from .scheduler import (
+    DEFAULT_BASE_DELAY,
+    DEFAULT_DEADLINE_HORIZON,
+    DEFAULT_MAX_RETRIES,
+    PRIORITY_WEIGHTS,
+    TaskScheduler,
+)
+from .executor import (
+    CommandExecutor,
+    Executor,
+    ExecutorResult,
+    MockExecutor,
+)
+from .preferences import (
+    DEFAULT_WEIGHTS,
+    VALID_MODES,
+    WEIGHT_KEYS,
+    Preferences,
+    PreferencesStore,
+)
 
-__version__ = "0.2.4"
+__version__ = "0.3.0"
 
 __all__ = [
     "ModelPolicy",
@@ -78,7 +105,30 @@ __all__ = [
     "QUOTA_WINDOW_SECONDS",
     "WINDOW_SECONDS",
     "COOLDOWN_SECONDS",
+    "Task",
+    "TaskStore",
+    "valid_transition",
+    "VALID_PRIORITIES",
+    "VALID_STATUSES",
+    "TaskScheduler",
+    "DEFAULT_BASE_DELAY",
+    "DEFAULT_DEADLINE_HORIZON",
+    "DEFAULT_MAX_RETRIES",
+    "PRIORITY_WEIGHTS",
+    "Executor",
+    "ExecutorResult",
+    "MockExecutor",
+    "CommandExecutor",
+    "Preferences",
+    "PreferencesStore",
+    "DEFAULT_WEIGHTS",
+    "VALID_MODES",
+    "WEIGHT_KEYS",
     "policy",
     "quota",
     "router",
+    "task",
+    "scheduler",
+    "executor",
+    "preferences",
 ]

@@ -11,6 +11,7 @@ import argparse
 import json
 import logging
 import os
+import socket
 import sys
 import urllib.error
 import urllib.parse
@@ -23,7 +24,7 @@ from .policy import ModelPolicy
 from .quota import QuotaTracker
 from .router import ModelRouter, format_model_key
 
-__version__ = "0.2.4"
+__version__ = "0.3.0"
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,9 @@ def _join_chunks(chunks) -> bytes:
 def _default_transport(url, headers, body, timeout):
     """默认非流式转发实现。返回 (status, headers, body_bytes)。
 
-    连接错误/超时统一返回 502，由上层记录失败冷却。
+    HTTPError（4xx/5xx）保留上游状态码与错误 body；
+    连接异常/超时（URLError、socket.timeout、ConnectionError 等）重新抛出，
+    由上层记录 transport_error 冷却。
     """
     req = urllib.request.Request(url, data=body, method="POST", headers=headers)
     try:
@@ -120,31 +123,26 @@ def _default_transport(url, headers, body, timeout):
     except urllib.error.HTTPError as exc:
         # 4xx/5xx：保留上游状态码与错误 body。
         return exc.code, _headers_dict(exc), exc.read()
-    except Exception as exc:
+    except (urllib.error.URLError, socket.timeout, ConnectionError) as exc:
         logger.warning("upstream unreachable (%s): %s", url, exc)
-        payload = json.dumps(
-            {
-                "error": {
-                    "message": "upstream unreachable",
-                    "type": "model_scheduler.upstream_unreachable",
-                    "detail": str(exc),
-                }
-            },
-            ensure_ascii=False,
-        ).encode("utf-8")
-        return 502, {"Content-Type": "application/json"}, payload
+        raise
 
 
 def _default_stream_opener(url, headers, body, timeout):
     """默认流式转发实现。返回 (status, headers, chunks_iterable)。
 
-    4xx/5xx 读完整错误 body 后返回；连接错误直接抛出，由上层统一处理。
+    4xx/5xx 读完整错误 body 后返回；
+    连接异常/超时（URLError、socket.timeout、ConnectionError 等）重新抛出，
+    由上层统一记录 transport_error 冷却。
     """
     req = urllib.request.Request(url, data=body, method="POST", headers=headers)
     try:
         resp = urllib.request.urlopen(req, timeout=timeout)
     except urllib.error.HTTPError as exc:
         return exc.code, _headers_dict(exc), (exc.read(),)
+    except (urllib.error.URLError, socket.timeout, ConnectionError) as exc:
+        logger.warning("upstream stream unreachable (%s): %s", url, exc)
+        raise
 
     # 逐行读取上游 SSE，不解析、不缓存流内容。
     def _iter_lines():
@@ -153,6 +151,29 @@ def _default_stream_opener(url, headers, body, timeout):
                 yield line
 
     return resp.status, _headers_dict(resp), _iter_lines()
+
+
+def _record_upstream_failure(quota, model, provider, status) -> None:
+    """按 HTTP 状态分类记录上游失败。
+
+    - 429：限流/额度耗尽 -> 进 cooldown（reason=rate_limit）
+    - 5xx：服务故障 -> 进 cooldown（reason=server_error）
+    - 400/401/403 及其他 4xx：请求/认证错误，仅记日志，不进 cooldown
+    """
+    try:
+        if status is not None and int(status) == 429:
+            quota.record_failure(model, provider, status=status, reason="rate_limit")
+        elif status is not None and int(status) >= 500:
+            quota.record_failure(model, provider, status=status, reason="server_error")
+        else:
+            logger.info(
+                "upstream returned non-cooldown status %s for %s@%s",
+                status,
+                model,
+                provider,
+            )
+    except Exception:
+        logger.warning("Failed to record upstream failure", exc_info=True)
 
 
 def extract_messages_text(messages) -> str:
@@ -450,15 +471,24 @@ def make_handler(app: ProxyApp):
                 )
             except Exception as exc:
                 logger.warning("upstream transport failed: %s", exc)
-                self.app.quota.record_failure(decision.get("model"), decision.get("provider"))
+                self.app.quota.record_failure(
+                    decision.get("model"),
+                    decision.get("provider"),
+                    reason="transport_error",
+                )
                 self._send_upstream_unreachable(exc)
                 return
 
             upstream_body = _as_bytes(upstream_body)
 
-            # 5. 成功记账；失败冷却。
+            # 5. 成功记账；失败按状态分类处理（400/401/403 不进 cooldown）。
             if status >= 400:
-                self.app.quota.record_failure(decision.get("model"), decision.get("provider"))
+                _record_upstream_failure(
+                    self.app.quota,
+                    decision.get("model"),
+                    decision.get("provider"),
+                    status,
+                )
             else:
                 self.app.quota.record_call(decision.get("model"), decision.get("provider"))
 
@@ -471,13 +501,22 @@ def make_handler(app: ProxyApp):
                 )
             except Exception as exc:
                 logger.warning("upstream stream open failed: %s", exc)
-                self.app.quota.record_failure(decision.get("model"), decision.get("provider"))
+                self.app.quota.record_failure(
+                    decision.get("model"),
+                    decision.get("provider"),
+                    reason="transport_error",
+                )
                 self._send_upstream_unreachable(exc)
                 return
 
             if status >= 400:
                 # 上游在 SSE 开始前返回 4xx/5xx：保留状态码与错误 body。
-                self.app.quota.record_failure(decision.get("model"), decision.get("provider"))
+                _record_upstream_failure(
+                    self.app.quota,
+                    decision.get("model"),
+                    decision.get("provider"),
+                    status,
+                )
                 error_body = _join_chunks(chunks)
                 self._send_upstream_response(status, upstream_headers, error_body, decision.get("key", ""))
                 return
@@ -496,11 +535,23 @@ def make_handler(app: ProxyApp):
                 # 逐块透传 SSE，不解析、不缓存流内容。
                 for chunk in _chunk_iter(chunks):
                     data = _as_bytes(chunk)
-                    if data:
+                    if not data:
+                        continue
+                    try:
                         self.wfile.write(data)
                         self.wfile.flush()
+                    except Exception as exc:
+                        # 写 wfile 失败通常是客户端断开，不记上游 cooldown。
+                        logger.warning("stream client write failed: %s", exc)
+                        return
             except Exception as exc:
+                # 读取/迭代上游 chunks 异常属于 transport_error，记 cooldown。
                 logger.warning("stream forwarding interrupted: %s", exc)
+                self.app.quota.record_failure(
+                    decision.get("model"),
+                    decision.get("provider"),
+                    reason="transport_error",
+                )
                 self._write_sse_error("stream forwarding interrupted")
 
         def _write_sse_error(self, message):

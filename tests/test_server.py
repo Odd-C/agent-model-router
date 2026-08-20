@@ -313,7 +313,7 @@ class ServerUnitTests(unittest.TestCase):
         base = self._serve_app(app)
         status, _, body = self._get_json(base, "/v1/health")
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body.decode("utf-8")), {"status": "ok", "version": "0.2.4"})
+        self.assertEqual(json.loads(body.decode("utf-8")), {"status": "ok", "version": "0.3.0"})
 
     def test_api_key_env_reference_resolved(self):
         config = copy.deepcopy(BASE_CONFIG)
