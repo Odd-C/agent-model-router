@@ -183,6 +183,38 @@ decision = route_model(assess_difficulty("帮我写一个 Python 脚本"), urgen
 
 > 来自上游第三方应用（如 WebUI 模型选择器）实测经验，所有示例用公开通用模型名。
 
+### 0. 接入前必做清单（必要动作，缺一步都会出问题）
+
+| # | 动作 | 说明 | 不做会怎样 |
+|---|---|---|---|
+| 1 | **配置 state 目录** | `configure_state_dir()` 或环境变量 `LLM_ROUTER_STATE_DIR`；确保目录**可写** | 状态落在默认目录，多实例/多进程互相覆盖 |
+| 2 | **写自己的模型画像** | `model-policy.json` 覆盖内置示例画像；内置 5 个公开示例（claude-3-5-sonnet/deepseek-chat/gemini/gpt-4o-mini/gpt-4o）只是机制演示，**不是你的真实模型** | 路由到不存在的模型 / 额度跟踪无效 |
+| 3 | **provider 连接配置就绪** | 画像里的 `id@provider` 对应的 provider 必须有 base_url + api_key（接入层配置）；key 用 `env:VAR` 引用，**不硬编码** | 推荐选了模型但上游调用 401/403 |
+| 4 | **传 `task_type` 或实现接入层推断** | 库不猜任务类型——`route_with_utility` 的 task 必须带 `task_type`（coding/image/text/batch/maintenance）或由接入层先推断 | 缺 task_type 时 quality_fit 退化为无区分，路由质量差 |
+| 5 | **接好失败上报** | 上游调用失败必须调 `record_failure(model, provider, reason, status)`；成功可调 `record_result` 更新健康档案 | 冷却不生效，故障模型持续被选 |
+| 6 | **验证免费额度字段** | 免费模型画像要配 `quota_per_window`，否则额度跟踪无意义 | 额度耗尽后仍被路由，触发上游 429 |
+
+**最小接入骨架**（组合上述动作）：
+
+```python
+import model_scheduler as ms
+ms.configure_state_dir("/var/lib/myapp/ms-state")   # 动作 1
+# 动作 2: model-policy.json 放真实画像（含 quota_per_window）
+# 动作 3: provider 配置在接入层，key 走 env
+# 动作 4: 调用前先 task_type（接入层推断或显式）
+
+from model_scheduler import route_with_utility
+from model_scheduler.policy import list_models
+
+task = {"task_type": "coding", "priority": "high", "deadline": None}
+result = route_with_utility(task, list_models())
+model, provider = result["model"], result["provider"]
+
+# ... 上游调用 ...
+# 动作 5: 失败必须上报
+ms.record_failure(model, provider, reason="rate_limit", status=429)
+```
+
 ### 1. 可选依赖：懒加载 + 优雅降级
 
 ```python

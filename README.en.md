@@ -183,6 +183,38 @@ decision = route_model(assess_difficulty("Write a Python script"), urgent=False)
 
 > Field-tested by upstream third-party apps (e.g. WebUI model selector). All examples use public generic model names.
 
+### 0. Pre-integration checklist (required actions; missing any one causes problems)
+
+| # | Action | Why | Failure mode |
+|---|---|---|---|
+| 1 | **Configure the state directory** | `configure_state_dir()` or env `LLM_ROUTER_STATE_DIR`; make sure it is **writable** | state lands in the default dir; multi-instance/multi-process state overwrites each other |
+| 2 | **Write your own model profiles** | `model-policy.json` overrides the built-in sample profiles; the 5 built-in public samples (claude-3-5-sonnet/deepseek-chat/gemini/gpt-4o-mini/gpt-4o) are **mechanism demos, not your real models** | routes to nonexistent models / quota tracking is meaningless |
+| 3 | **Provider connection ready** | every `id@provider` in the profiles needs a provider with base_url + api_key (in the access layer); reference keys via `env:VAR`, **never hardcode** | the recommendation picks a model but upstream returns 401/403 |
+| 4 | **Pass `task_type` or implement access-layer inference** | the library does not guess task types — the task passed to `route_with_utility` must carry `task_type` (coding/image/text/batch/maintenance) or be inferred by the access layer first | quality_fit degrades to no discrimination; poor routing |
+| 5 | **Wire up failure reporting** | on upstream failure call `record_failure(model, provider, reason, status)`; on success call `record_result` to update the health profile | cooldown never kicks in; failing models keep getting selected |
+| 6 | **Validate free-quota fields** | free models need `quota_per_window` in their profile, otherwise quota tracking is meaningless | exhausted models keep being routed → upstream 429s |
+
+**Minimal integration skeleton** (combining the actions):
+
+```python
+import model_scheduler as ms
+ms.configure_state_dir("/var/lib/myapp/ms-state")   # action 1
+# action 2: model-policy.json with your real profiles (incl. quota_per_window)
+# action 3: provider config lives in the access layer; keys via env
+# action 4: resolve task_type before calling (access layer or explicit)
+
+from model_scheduler import route_with_utility
+from model_scheduler.policy import list_models
+
+task = {"task_type": "coding", "priority": "high", "deadline": None}
+result = route_with_utility(task, list_models())
+model, provider = result["model"], result["provider"]
+
+# ... upstream call ...
+# action 5: report failures
+ms.record_failure(model, provider, reason="rate_limit", status=429)
+```
+
 ### 1. Optional dependency: lazy import + graceful degradation
 
 ```python
