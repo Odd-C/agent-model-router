@@ -172,19 +172,33 @@ Opportunistic Scheduling 看板：任务列表/提交/手动 tick/偏好四档/�
 pip install model-scheduler
 ```
 
-安装后直接 import（无需 clone 源码）：
+安装后直接 import（无需 clone 源码）——**推荐用 Utility 评分制（v0.4+）**：
 
 ```python
-from model_scheduler import recommend_for_session
+from model_scheduler import route_with_utility
+from model_scheduler.policy import list_models
+from model_scheduler.utility import HardConstraints
 
-rec = recommend_for_session("帮我写一个 Python 脚本", message_count=3, session_id="demo-session-1")
-print(rec)
+# 全部模型画像作为候选，先过硬约束再按六分项评分选最优
+result = route_with_utility(
+    {"task_type": "coding", "priority": "high", "deadline": None},
+    list_models(),
+    constraints=HardConstraints(cost_max="free"),   # 只要免费模型
+)
+print(result)
+# → {model, provider, score, breakdown: {质量/成本/延迟/健康/额度/截止}, why}
 ```
 
-需要代理层 CLI 时：
+自然语言意图入口（v0.5+，Policy Compiler）：
 
-```bash
-model-scheduler serve --config model-policy.json
+```python
+from model_scheduler import route_with_intent
+
+result = route_with_intent(
+    {"task_type": "coding", "priority": "high", "deadline": None},
+    list_models(),
+    "要便宜点的",          # 自然语言 → 硬约束 + 权重
+)
 ```
 
 ### 直接 import（源码运行）
@@ -195,27 +209,27 @@ cd model-scheduler
 PYTHONPATH=src python
 ```
 
-两行跑通：
+完整示例见 `examples/quickstart.py`。
+
+### v0.2 兼容层（旧 API，向后兼容保留）
+
+以下 v0.2 时代的 API 仍然可用，但**新项目建议用上面的 Utility 评分制**：
 
 ```python
-from model_scheduler import assess_difficulty, route_model
+from model_scheduler import assess_difficulty, route_model, recommend_for_session
 
 text = "帮我写一个 Python 脚本"
 decision = route_model(assess_difficulty(text), urgent=False)
 print(decision)
-# {'model': 'claude-3-5-sonnet', 'provider': 'anthropic', 'reason': '复杂任务，Claude 3.5 Sonnet (free flagship) 可用', 'tier': 'S+', 'cost': 'free'}
-```
+# {'model': 'claude-3-5-sonnet', 'provider': 'anthropic', 'reason': '复杂任务，...', 'tier': 'S+', 'cost': 'free'}
 
-会话级推荐入口：
-
-```python
-from model_scheduler import recommend_for_session
-
-rec = recommend_for_session("帮我写一个 Python 脚本", message_count=3, session_id="demo-session-1")
+rec = recommend_for_session(text, message_count=3, session_id="demo-session-1")
 print(rec)
 ```
 
-完整示例见 `examples/quickstart.py`。
+- `assess_difficulty(text)` / `route_model(difficulty, ...)`：关键词难度 → role 链决策（v0.2 默认方式）
+- `recommend_for_session(...)`：会话级推荐（难度 + 角色链 + quota/cooldown）
+- 代理层 CLI：`model-scheduler serve --config model-policy.json`（见下节，独立可用）
 
 ### 代理层（OpenAI 兼容，全 Agent 通用）
 
@@ -257,7 +271,9 @@ resp = client.chat.completions.create(model="auto", messages=[{"role": "user", "
 
 **部署形态**：代理是纯本地进程，不依赖任何外部调度服务/中心节点；决策与状态（额度、峰谷、冷却）全部在库内 + 本地状态文件，不收集遥测。用户只需自备 provider 的 API key 和自己的 `model-policy.json`（默认画像仅为机制演示）。
 
-## 决策规则说明
+## 决策规则说明（v0.2 兼容层）
+
+> 本节描述 v0.2 的规则式决策（`assess_difficulty` / `route_model`）。它们仍然可用且被 proxy 层使用，但 **v0.4+ 的 Utility 评分制是推荐方式**（见「核心概念」）。了解本节有助于读懂旧集成代码与 proxy 层日志。
 
 `assess_difficulty(text)` 是纯 CPU 规则打分，范围 0-5：
 

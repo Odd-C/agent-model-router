@@ -172,19 +172,33 @@ The paid-fallback warning ("peak price doubled" in `reason`) is also evaluated a
 pip install model-scheduler
 ```
 
-Import directly after install (no need to clone the source):
+Import directly after install (no need to clone the source) — **Utility scoring (v0.4+) is recommended**:
 
 ```python
-from model_scheduler import recommend_for_session
+from model_scheduler import route_with_utility
+from model_scheduler.policy import list_models
+from model_scheduler.utility import HardConstraints
 
-rec = recommend_for_session("Write a Python script", message_count=3, session_id="demo-session-1")
-print(rec)
+# All model profiles as candidates; filter by hard constraints, then score across six dimensions
+result = route_with_utility(
+    {"task_type": "coding", "priority": "high", "deadline": None},
+    list_models(),
+    constraints=HardConstraints(cost_max="free"),   # free models only
+)
+print(result)
+# → {model, provider, score, breakdown: {quality/cost/latency/health/quota/deadline}, why}
 ```
 
-For the proxy CLI:
+Natural-language intent entry (v0.5+, Policy Compiler):
 
-```bash
-model-scheduler serve --config model-policy.json
+```python
+from model_scheduler import route_with_intent
+
+result = route_with_intent(
+    {"task_type": "coding", "priority": "high", "deadline": None},
+    list_models(),
+    "make it cheap",         # natural language → hard constraints + weights
+)
 ```
 
 ### Direct import (run from source)
@@ -195,31 +209,27 @@ cd model-scheduler
 PYTHONPATH=src python
 ```
 
-> The default output language is Chinese (`zh`). To get English `reason` strings,
-> set `"language": "en"` in `model-policy.json` (see Configuration below).
-> The example output below shows English mode.
+Full example: `examples/quickstart.py`.
 
-Two lines to get going:
+### v0.2 compatibility layer (old API, kept for backward compatibility)
+
+These v0.2-era APIs still work, but **new projects should use the Utility scoring above**:
 
 ```python
-from model_scheduler import assess_difficulty, route_model
+from model_scheduler import assess_difficulty, route_model, recommend_for_session
 
 text = "帮我写一个 Python 脚本"
 decision = route_model(assess_difficulty(text), urgent=False)
 print(decision)
-# {'model': 'claude-3-5-sonnet', 'provider': 'anthropic', 'reason': 'Complex task, Claude 3.5 Sonnet (free flagship) available', 'tier': 'S+', 'cost': 'free'}
-```
+# {'model': 'claude-3-5-sonnet', 'provider': 'anthropic', 'reason': 'Complex task, ...', 'tier': 'S+', 'cost': 'free'}
 
-Session-level recommendation entry:
-
-```python
-from model_scheduler import recommend_for_session
-
-rec = recommend_for_session("帮我写一个 Python 脚本", message_count=3, session_id="demo-session-1")
+rec = recommend_for_session(text, message_count=3, session_id="demo-session-1")
 print(rec)
 ```
 
-Full example: `examples/quickstart.py`.
+- `assess_difficulty(text)` / `route_model(difficulty, ...)`: keyword-difficulty → role chain (v0.2 default)
+- `recommend_for_session(...)`: session-level recommendation (difficulty + role chain + quota/cooldown)
+- Proxy CLI: `model-scheduler serve --config model-policy.json` (see next section, independently usable)
 
 ### Proxy layer (OpenAI-compatible, works with any agent)
 
