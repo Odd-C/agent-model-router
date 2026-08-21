@@ -732,7 +732,11 @@ def route_with_utility(
     # 单候选退化为绝对分（无归一化参照）。
     if len(prepared) == 1:
         _, candidate = prepared[0]
-        return _route_result(candidate, utility(task, candidate, now_ts, weights))
+        us = utility(task, candidate, now_ts, weights)
+        # 标注单候选：归一化字段为 None + 说明，避免调用方把绝对分误当相对分。
+        us.breakdown["normalized"] = None
+        us.breakdown["note"] = "single candidate — no normalization reference"
+        return _route_result(candidate, us)
 
     # 多候选：先算 raw → 候选集内 min-max 归一化 → 加权 → 选最高。
     raws = [_raw_breakdown(task, candidate, now_ts) for _, candidate in prepared]

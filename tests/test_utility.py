@@ -143,6 +143,27 @@ class ImageVisionCapabilityTests(unittest.TestCase):
             role="free-vision",
         )
 
+    def test_route_single_candidate_marks_normalization_none(self):
+        """单候选退化为绝对分：breakdown.normalized=None + note，避免误当相对分。"""
+        cand = {"id": "gpt-4o", "provider": "openai", "tier": "S+", "cost": "paid",
+                "scenarios": ["complex"]}
+        r = route_with_utility({"task_type": "coding", "priority": "high", "deadline": None}, [cand])
+        self.assertEqual(r["model"], "gpt-4o")
+        self.assertIsNone(r["breakdown"].get("normalized"))
+        self.assertIn("single candidate", r["breakdown"].get("note", ""))
+        self.assertIn("quality_fit", r["breakdown"])
+        self.assertIn("weights", r["breakdown"])
+
+    def test_route_multi_candidate_has_normalized_and_no_note(self):
+        """多候选：normalized 是 dict，无 note 字段。"""
+        cands = [
+            {"id": "gpt-4o", "provider": "openai", "tier": "S+", "cost": "paid", "scenarios": ["complex"]},
+            {"id": "deepseek-chat", "provider": "deepseek", "tier": "A", "cost": "free", "scenarios": ["simple"]},
+        ]
+        r = route_with_utility({"task_type": "coding", "priority": "high", "deadline": None}, cands)
+        self.assertIsInstance(r["breakdown"].get("normalized"), dict)
+        self.assertNotIn("note", r["breakdown"])
+
     def test_image_task_rejects_text_model(self):
         self.assertEqual(quality_fit("image", self._text_model()), 0.0)
 
