@@ -5,8 +5,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler.preferences import DEFAULT_WEIGHTS
-from model_scheduler.utility import (
+from agent_model_router.preferences import DEFAULT_WEIGHTS
+from agent_model_router.utility import (
     DEFAULT_FAILURE_RISK,
     DEFAULT_LATENCY_PENALTY,
     UtilityScore,

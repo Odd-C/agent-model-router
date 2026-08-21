@@ -9,7 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler.policy import (
+from agent_model_router.policy import (
     DEFAULT_MODEL_POLICIES,
     ModelPolicy,
     atomic_write_json,

@@ -4,8 +4,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler.executor import CommandExecutor
-from model_scheduler.task import Task
+from agent_model_router.executor import CommandExecutor
+from agent_model_router.task import Task
 
 
 def make_task(payload):

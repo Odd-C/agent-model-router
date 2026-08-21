@@ -1,4 +1,4 @@
-# model-scheduler
+# agent-model-router
 
 [English](README.md) | [中文](README.zh-CN.md)
 
@@ -6,7 +6,7 @@
 
 ---
 
-**model-scheduler** is a **zero-dependency LLM scheduling library** that makes explainable "which model for this task" decisions. It evolved from v0.2 rule-based routing to the **Utility scoring** (v0.4+) — a six-dimension normalized score (quality / cost / latency / health / quota / deadline) with hard constraints filtered first — plus a task system, a Policy Compiler for natural-language intents, a dashboard, and a benchmark tool.
+**agent-model-router** is a **zero-dependency LLM scheduling library** that makes explainable "which model for this task" decisions. It evolved from v0.2 rule-based routing to the **Utility scoring** (v0.4+) — a six-dimension normalized score (quality / cost / latency / health / quota / deadline) with hard constraints filtered first — plus a task system, a Policy Compiler for natural-language intents, a dashboard, and a benchmark tool.
 
 **One-liner**: from "which model still works" to "which model is most cost-effective".
 
@@ -19,7 +19,7 @@ Real pain points when integrating multiple model providers:
 - Complex tasks want the free flagship, but must auto-fall back when quota runs out or rate limits hit;
 - Every caller hand-rolling its own "which model to pick" logic scatters rules, makes tuning and testing hard.
 
-model-scheduler bakes decisions into one pure-stdlib component: JSON-overridable model profiles, explainable decisions, traceable degradation, and pluggable by any OpenAI-compatible caller.
+agent-model-router bakes decisions into one pure-stdlib component: JSON-overridable model profiles, explainable decisions, traceable degradation, and pluggable by any OpenAI-compatible caller.
 
 ## Core concepts
 
@@ -107,15 +107,15 @@ The library does not guess the task type — `task_type` is passed explicitly by
 ### Install
 
 ```bash
-pip install model-scheduler
+pip install agent-model-router
 ```
 
 ### Minimal routing (Utility scoring, recommended)
 
 ```python
-from model_scheduler import route_with_utility
-from model_scheduler.policy import list_models
-from model_scheduler.utility import HardConstraints
+from agent_model_router import route_with_utility
+from agent_model_router.policy import list_models
+from agent_model_router.utility import HardConstraints
 
 # All profiles as candidates: filter by hard constraints (free only), then score across six dimensions
 result = route_with_utility(
@@ -130,7 +130,7 @@ print(result)
 ### Natural-language intent (Policy Compiler)
 
 ```python
-from model_scheduler import route_with_intent
+from agent_model_router import route_with_intent
 
 result = route_with_intent(
     {"task_type": "coding", "priority": "high", "deadline": None},
@@ -142,9 +142,9 @@ result = route_with_intent(
 ### Task scheduling
 
 ```python
-from model_scheduler.task import TaskStore
-from model_scheduler.scheduler import TaskScheduler
-from model_scheduler.executor import MockExecutor
+from agent_model_router.task import TaskStore
+from agent_model_router.scheduler import TaskScheduler
+from agent_model_router.executor import MockExecutor
 
 store = TaskStore(state_dir, backend="sqlite")   # json / sqlite
 scheduler = TaskScheduler(store, MockExecutor())
@@ -158,13 +158,13 @@ print(store.get(task.task_id).status)            # → done
 ### Dashboard
 
 ```bash
-PYTHONPATH=src python -m model_scheduler.taskserver --port 8099
+PYTHONPATH=src python -m agent_model_router.taskserver --port 8099
 ```
 
 ### Proxy layer (OpenAI-compatible, v0.2+)
 
 ```bash
-model-scheduler serve --config model-policy.json --host 127.0.0.1 --port 8765
+agent-model-router serve --config model-policy.json --host 127.0.0.1 --port 8765
 ```
 
 Any OpenAI-compatible client points `base_url` at the proxy (gets quota tracking / peak awareness / failure cooldown), zero code changes.
@@ -174,7 +174,7 @@ Any OpenAI-compatible client points `base_url` at the proxy (gets quota tracking
 `assess_difficulty` / `route_model` / `recommend_for_session` still work (used internally by the proxy), but new projects should use Utility scoring:
 
 ```python
-from model_scheduler import assess_difficulty, route_model
+from agent_model_router import assess_difficulty, route_model
 
 decision = route_model(assess_difficulty("Write a Python script"), urgent=False)
 ```
@@ -197,14 +197,14 @@ decision = route_model(assess_difficulty("Write a Python script"), urgent=False)
 **Minimal integration skeleton** (combining the actions):
 
 ```python
-import model_scheduler as ms
+import agent_model_router as ms
 ms.configure_state_dir("/var/lib/myapp/ms-state")   # action 1
 # action 2: model-policy.json with your real profiles (incl. quota_per_window)
 # action 3: provider config lives in the access layer; keys via env
 # action 4: resolve task_type before calling (access layer or explicit)
 
-from model_scheduler import route_with_utility
-from model_scheduler.policy import list_models
+from agent_model_router import route_with_utility
+from agent_model_router.policy import list_models
 
 task = {"task_type": "coding", "priority": "high", "deadline": None}
 result = route_with_utility(task, list_models())
@@ -220,7 +220,7 @@ ms.record_failure(model, provider, reason="rate_limit", status=429)
 ```python
 def _load_lib():
     try:
-        import model_scheduler as ms
+        import agent_model_router as ms
         return ms
     except ImportError:
         return None
@@ -255,7 +255,7 @@ On upstream failure call `record_failure(model, provider, reason, status)`; the 
 ## Benchmark
 
 ```bash
-PYTHONPATH=src python -m model_scheduler.benchmark --tasks 300 --seed 42
+PYTHONPATH=src python -m agent_model_router.benchmark --tasks 300 --seed 42
 ```
 
 Reproducible task sets comparing utility vs role chains vs round-robin. Measured (300 tasks):

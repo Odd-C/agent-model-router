@@ -6,9 +6,9 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler.executor import ExecutorResult, MockExecutor
-from model_scheduler.scheduler import DEGRADATION_MATRIX, TaskScheduler, decide_action
-from model_scheduler.task import Task, TaskStore
+from agent_model_router.executor import ExecutorResult, MockExecutor
+from agent_model_router.scheduler import DEGRADATION_MATRIX, TaskScheduler, decide_action
+from agent_model_router.task import Task, TaskStore
 
 
 def make_task(task_id="t1", status="queued", priority="normal", defer_until=None, deadline=None, attempts=0):
@@ -40,31 +40,31 @@ class SchedulerDeferTests(unittest.TestCase):
         return TaskScheduler(self.store, MockExecutor(), **kwargs)
 
     def test_high_priority_immediate_queued(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             task = self._scheduler().submit("text", {"x": 1}, priority="high")
         self.assertEqual(task.status, "queued")
         self.assertIsNone(task.defer_until)
 
     def test_normal_priority_deferred_with_base_delay(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             task = self._scheduler(base_delay=300).submit("text", {"x": 1}, priority="normal")
         self.assertEqual(task.status, "deferred")
         self.assertEqual(task.defer_until, 1300.0)
 
     def test_low_priority_deferred_longer(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             task = self._scheduler(base_delay=100).submit("text", {"x": 1}, priority="low")
         self.assertEqual(task.status, "deferred")
         self.assertEqual(task.defer_until, 1200.0)
 
     def test_near_deadline_immediate_queued(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             task = self._scheduler(deadline_horizon=3600).submit("text", {"x": 1}, deadline=1400.0)
         self.assertEqual(task.status, "queued")
         self.assertIsNone(task.defer_until)
 
     def test_far_deadline_defers(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             task = self._scheduler().submit("text", {"x": 1}, deadline=10000.0)
         self.assertEqual(task.status, "deferred")
         self.assertIsNotNone(task.defer_until)
@@ -74,13 +74,13 @@ class SchedulerDeferTests(unittest.TestCase):
             self._scheduler().submit("text", {}, priority="urgent")
 
     def test_past_deadline_submit_is_expired(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             task = self._scheduler().submit("text", {"x": 1}, deadline=1000.0)
         self.assertEqual(task.status, "expired")
         self.assertIsNone(task.defer_until)
         self.assertEqual(self.store.get(task.task_id).status, "expired")
 
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             task = self._scheduler().submit("text", {"x": 1}, deadline=900.0)
         self.assertEqual(task.status, "expired")
         self.assertEqual(self.store.get(task.task_id).status, "expired")

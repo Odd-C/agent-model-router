@@ -1,4 +1,4 @@
-"""model_scheduler.health — ProviderHealth 长期健康档案。
+"""agent_model_router.health — ProviderHealth 长期健康档案。
 
 与 quota.model-cooldown.json（短期路由冷却）不同，本模块把每次调用的
 状态码与延迟写入独立状态文件 model-health.json，作为长期质量/延迟评估依据。

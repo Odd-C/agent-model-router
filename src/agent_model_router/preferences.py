@@ -1,4 +1,4 @@
-"""model_scheduler.preferences — v0.3 偏好分级权重配置。
+"""agent_model_router.preferences — v0.3 偏好分级权重配置。
 
 默认权重表是契约：六个分项 + 四个 mode 档位，代码定死；只能通过
 preferences.json 覆盖数值，不能发明新档位/新分项。

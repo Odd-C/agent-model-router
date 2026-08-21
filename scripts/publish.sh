@@ -18,7 +18,7 @@ REPO_DIR="$(pwd)"
 
 VERSION="${1:-}"
 if [ -z "$VERSION" ]; then
-  VERSION="$(python3 -c 'import re; print(re.search(r"__version__ = [\"\x27]([^\"\x27]+)[\"\x27]", open("src/model_scheduler/__init__.py", encoding="utf-8").read()).group(1))')"
+  VERSION="$(python3 -c 'import re; print(re.search(r"__version__ = [\"\x27]([^\"\x27]+)[\"\x27]", open("src/agent_model_router/__init__.py", encoding="utf-8").read()).group(1))')"
 fi
 echo "▶ 目标版本: $VERSION"
 
@@ -31,8 +31,8 @@ from pathlib import Path
 version = os.environ["EXPECT"]
 # 版本必须出现在这些文件（且不出现上一 patch 版本号残留）
 files = [
-    Path("pyproject.toml"), Path("src/model_scheduler/__init__.py"),
-    Path("src/model_scheduler/server.py"), Path("src/model_scheduler/taskserver.py"),
+    Path("pyproject.toml"), Path("src/agent_model_router/__init__.py"),
+    Path("src/agent_model_router/server.py"), Path("src/agent_model_router/taskserver.py"),
     Path("tests/test_server.py"), Path("tests/test_taskserver.py"),
 ]
 missing = [f"{f}" for f in files if version not in f.read_text(encoding="utf-8")]
@@ -68,7 +68,7 @@ rm -rf dist build *.egg-info
 
 # ── 5. 上传 ────────────────────────────────────────────────────────────────
 echo "▶ [5/6] 上传 PyPI..."
-"$TOOLS_DIR/bin/twine" upload -r pypi "dist/model_scheduler-${VERSION}"*.whl "dist/model_scheduler-${VERSION}"*.tar.gz 2>&1 | tail -2
+"$TOOLS_DIR/bin/twine" upload -r pypi "dist/agent_model_router-${VERSION}"*.whl "dist/agent_model_router-${VERSION}"*.tar.gz 2>&1 | tail -2
 
 # ── 6. 索引等待 + import 实测版本验证 ─────────────────────────────────────
 echo "▶ [6/6] 等待 PyPI 索引 + 验证安装..."
@@ -83,7 +83,7 @@ done
 TMPVENV="$(mktemp -d)/venv"
 python3 -m venv "$TMPVENV"
 "$TMPVENV/bin/pip" install -q -i https://pypi.org/simple --no-cache-dir "model-scheduler==${VERSION}"
-INSTALLED="$("$TMPVENV/bin/python" -c "import model_scheduler; print(model_scheduler.__version__)" 2>/dev/null || echo MISSING)"
+INSTALLED="$("$TMPVENV/bin/python" -c "import agent_model_router; print(agent_model_router.__version__)" 2>/dev/null || echo MISSING)"
 if [ "$INSTALLED" = "$VERSION" ]; then
   echo "  ✓ 从 PyPI 安装实测版本 = $VERSION（import 验证，非 pip show）"
 else

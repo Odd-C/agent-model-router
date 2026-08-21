@@ -1,4 +1,4 @@
-"""model_scheduler.executor — Executor 执行器接口与通用示例实现。
+"""agent_model_router.executor — Executor 执行器接口与通用示例实现。
 
 scheduler 只依赖 Executor Protocol；Ruya 等私有 Executor 不进本仓库。
 CommandExecutor 是零依赖通用示例：payload 形如 ``{"command": ["echo", "hi"]}``。

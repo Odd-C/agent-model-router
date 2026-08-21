@@ -1,4 +1,4 @@
-# model-scheduler
+# agent-model-router
 
 [English](README.md) | [中文](README.zh-CN.md)
 
@@ -6,7 +6,7 @@
 
 ---
 
-model-scheduler 是一个**零第三方依赖的 LLM 调度库**：给「当前任务选哪个模型」做可解释决策。从 v0.2 的规则式路由，演进到 v0.4+ 的 **Utility 评分制**（质量/成本/延迟/健康/额度/截止六维评分 + 硬约束先砍后评），并包含任务系统、Policy Compiler 自然语言意图、看板与 Benchmark 工具。
+agent-model-router 是一个**零第三方依赖的 LLM 调度库**：给「当前任务选哪个模型」做可解释决策。从 v0.2 的规则式路由，演进到 v0.4+ 的 **Utility 评分制**（质量/成本/延迟/健康/额度/截止六维评分 + 硬约束先砍后评），并包含任务系统、Policy Compiler 自然语言意图、看板与 Benchmark 工具。
 
 **一句话定位**：从「哪个模型还能用」到「哪个模型最划算」。
 
@@ -19,7 +19,7 @@ model-scheduler 是一个**零第三方依赖的 LLM 调度库**：给「当前�
 - 复杂任务想用免费旗舰，但额度耗尽/限流时必须自动降级；
 - 每个调用方都自己写「选哪个模型」的判断 → 规则散落、难调参、难测试。
 
-model-scheduler 把决策固化进一个纯标准库组件：模型画像可 JSON 覆盖、决策可解释、降级可追溯，任何 OpenAI 兼容调用方都能接入。
+agent-model-router 把决策固化进一个纯标准库组件：模型画像可 JSON 覆盖、决策可解释、降级可追溯，任何 OpenAI 兼容调用方都能接入。
 
 ## 核心概念
 
@@ -107,15 +107,15 @@ Opportunistic Scheduling 单页：任务列表/提交/手动 tick/偏好四档/�
 ### 安装
 
 ```bash
-pip install model-scheduler
+pip install agent-model-router
 ```
 
 ### 最简路由（Utility 评分制，推荐）
 
 ```python
-from model_scheduler import route_with_utility
-from model_scheduler.policy import list_models
-from model_scheduler.utility import HardConstraints
+from agent_model_router import route_with_utility
+from agent_model_router.policy import list_models
+from agent_model_router.utility import HardConstraints
 
 # 全部画像为候选：先过硬约束（只要免费），再六维评分选最优
 result = route_with_utility(
@@ -130,7 +130,7 @@ print(result)
 ### 自然语言意图（Policy Compiler）
 
 ```python
-from model_scheduler import route_with_intent
+from agent_model_router import route_with_intent
 
 result = route_with_intent(
     {"task_type": "coding", "priority": "high", "deadline": None},
@@ -142,9 +142,9 @@ result = route_with_intent(
 ### 任务调度
 
 ```python
-from model_scheduler.task import TaskStore
-from model_scheduler.scheduler import TaskScheduler
-from model_scheduler.executor import MockExecutor
+from agent_model_router.task import TaskStore
+from agent_model_router.scheduler import TaskScheduler
+from agent_model_router.executor import MockExecutor
 
 store = TaskStore(state_dir, backend="sqlite")   # json / sqlite
 scheduler = TaskScheduler(store, MockExecutor())
@@ -158,13 +158,13 @@ print(store.get(task.task_id).status)            # → done
 ### 看板
 
 ```bash
-PYTHONPATH=src python -m model_scheduler.taskserver --port 8099
+PYTHONPATH=src python -m agent_model_router.taskserver --port 8099
 ```
 
 ### 代理层（OpenAI 兼容，v0.2+）
 
 ```bash
-model-scheduler serve --config model-policy.json --host 127.0.0.1 --port 8765
+agent-model-router serve --config model-policy.json --host 127.0.0.1 --port 8765
 ```
 
 任意 OpenAI 兼容客户端把 `base_url` 指向代理即可（自动获得额度跟踪/峰谷感知/失败冷却），零改码。
@@ -174,7 +174,7 @@ model-scheduler serve --config model-policy.json --host 127.0.0.1 --port 8765
 `assess_difficulty` / `route_model` / `recommend_for_session` 仍然可用（proxy 层内部使用），但新项目推荐 Utility 评分制：
 
 ```python
-from model_scheduler import assess_difficulty, route_model
+from agent_model_router import assess_difficulty, route_model
 
 decision = route_model(assess_difficulty("帮我写一个 Python 脚本"), urgent=False)
 ```
@@ -197,14 +197,14 @@ decision = route_model(assess_difficulty("帮我写一个 Python 脚本"), urgen
 **最小接入骨架**（组合上述动作）：
 
 ```python
-import model_scheduler as ms
+import agent_model_router as ms
 ms.configure_state_dir("/var/lib/myapp/ms-state")   # 动作 1
 # 动作 2: model-policy.json 放真实画像（含 quota_per_window）
 # 动作 3: provider 配置在接入层，key 走 env
 # 动作 4: 调用前先 task_type（接入层推断或显式）
 
-from model_scheduler import route_with_utility
-from model_scheduler.policy import list_models
+from agent_model_router import route_with_utility
+from agent_model_router.policy import list_models
 
 task = {"task_type": "coding", "priority": "high", "deadline": None}
 result = route_with_utility(task, list_models())
@@ -220,7 +220,7 @@ ms.record_failure(model, provider, reason="rate_limit", status=429)
 ```python
 def _load_lib():
     try:
-        import model_scheduler as ms
+        import agent_model_router as ms
         return ms
     except ImportError:
         return None
@@ -255,7 +255,7 @@ def _load_lib():
 ## Benchmark
 
 ```bash
-PYTHONPATH=src python -m model_scheduler.benchmark --tasks 300 --seed 42
+PYTHONPATH=src python -m agent_model_router.benchmark --tasks 300 --seed 42
 ```
 
 可复现任务集对比 utility vs role 链 vs round-robin。实测（300 任务）：

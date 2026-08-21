@@ -11,10 +11,10 @@ from urllib import error, request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler.policy import ModelPolicy
-from model_scheduler.quota import QuotaTracker
-from model_scheduler.router import ModelRouter
-from model_scheduler.server import (
+from agent_model_router.policy import ModelPolicy
+from agent_model_router.quota import QuotaTracker
+from agent_model_router.router import ModelRouter
+from agent_model_router.server import (
     ProxyApp,
     build_chat_completions_url,
     create_server,
@@ -313,7 +313,7 @@ class ServerUnitTests(unittest.TestCase):
         base = self._serve_app(app)
         status, _, body = self._get_json(base, "/v1/health")
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body.decode("utf-8")), {"status": "ok", "version": "0.6.2"})
+        self.assertEqual(json.loads(body.decode("utf-8")), {"status": "ok", "version": "1.0.0"})
 
     def test_api_key_env_reference_resolved(self):
         config = copy.deepcopy(BASE_CONFIG)

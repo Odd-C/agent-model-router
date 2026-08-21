@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler.task import Task, TaskStore
+from agent_model_router.task import Task, TaskStore
 
 
 def _add_tasks_worker(state_dir: str, prefix: str, count: int) -> None:

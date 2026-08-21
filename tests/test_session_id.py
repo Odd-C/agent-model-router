@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler import ModelRouter, recommend_for_session
+from agent_model_router import ModelRouter, recommend_for_session
 
 
 class SessionIdPassthroughTests(unittest.TestCase):

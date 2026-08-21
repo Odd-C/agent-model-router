@@ -10,10 +10,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler.policy import ModelPolicy
-from model_scheduler.quota import QuotaTracker
-from model_scheduler.router import ModelRouter
-from model_scheduler.server import ProxyApp, create_server
+from agent_model_router.policy import ModelPolicy
+from agent_model_router.quota import QuotaTracker
+from agent_model_router.router import ModelRouter
+from agent_model_router.server import ProxyApp, create_server
 
 
 class _MockProviderHandler(BaseHTTPRequestHandler):

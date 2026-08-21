@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler.task import Task, TaskStore, valid_transition
+from agent_model_router.task import Task, TaskStore, valid_transition
 
 
 def make_task(task_id="t1", status="queued", priority="normal", defer_until=None, deadline=None, attempts=0):

@@ -1,4 +1,4 @@
-"""model_scheduler.policy — 模型画像表。
+"""agent_model_router.policy — 模型画像表。
 
 职责：
   1. 内置通用示例模型画像（能力档、付费/免费、5h 窗口配额、

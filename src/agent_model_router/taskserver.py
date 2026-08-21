@@ -1,10 +1,10 @@
-"""model_scheduler.taskserver — Opportunistic Scheduling 看板 HTTP 服务（零依赖）。
+"""agent_model_router.taskserver — Opportunistic Scheduling 看板 HTTP 服务（零依赖）。
 
 单文件看板后端 + 内嵌 HTML 前端。仅使用标准库：http.server、json、urllib。
 后端复用 TaskStore / TaskScheduler / PreferencesStore / MockExecutor。
 
 用法：
-    python -m model_scheduler.taskserver --host 127.0.0.1 --port 8080 [--state-dir PATH]
+    python -m agent_model_router.taskserver --host 127.0.0.1 --port 8080 [--state-dir PATH]
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from .scheduler import (
 )
 from .task import VALID_PRIORITIES, VALID_STATUSES, Task, TaskStore
 
-__version__ = "0.6.2"
+__version__ = "1.0.0"
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +209,7 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
-        server_version = "model-scheduler-taskserver/0.6.2"
+        server_version = "agent-model-router-taskserver/1.0.0"
 
         def log_message(self, fmt: str, *args: Any) -> None:
             logger.debug("%s - %s", self.address_string(), fmt % args)
@@ -237,7 +237,7 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                         {
                             "error": {
                                 "message": "internal server error",
-                                "type": "model_scheduler.internal_error",
+                                "type": "agent_model_router.internal_error",
                             }
                         },
                     )
@@ -254,7 +254,7 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                 if method == "GET":
                     self._handle_page()
                 else:
-                    self._send_error(405, "method not allowed", "model_scheduler.method_not_allowed")
+                    self._send_error(405, "method not allowed", "agent_model_router.method_not_allowed")
                 return
 
             parts = [unquote(seg) for seg in path.split("/") if seg]
@@ -265,7 +265,7 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                     if method == "GET":
                         self._handle_health()
                     else:
-                        self._send_error(405, "method not allowed", "model_scheduler.method_not_allowed")
+                        self._send_error(405, "method not allowed", "agent_model_router.method_not_allowed")
                     return
                 if name == "tasks":
                     if method == "GET":
@@ -273,19 +273,19 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                     elif method == "POST":
                         self._handle_create_task()
                     else:
-                        self._send_error(405, "method not allowed", "model_scheduler.method_not_allowed")
+                        self._send_error(405, "method not allowed", "agent_model_router.method_not_allowed")
                     return
                 if name == "tick":
                     if method == "POST":
                         self._handle_tick()
                     else:
-                        self._send_error(405, "method not allowed", "model_scheduler.method_not_allowed")
+                        self._send_error(405, "method not allowed", "agent_model_router.method_not_allowed")
                     return
                 if name == "stats":
                     if method == "GET":
                         self._handle_stats()
                     else:
-                        self._send_error(405, "method not allowed", "model_scheduler.method_not_allowed")
+                        self._send_error(405, "method not allowed", "agent_model_router.method_not_allowed")
                     return
                 if name == "preferences":
                     if method == "GET":
@@ -293,14 +293,14 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                     elif method == "PUT":
                         self._handle_put_preferences()
                     else:
-                        self._send_error(405, "method not allowed", "model_scheduler.method_not_allowed")
+                        self._send_error(405, "method not allowed", "agent_model_router.method_not_allowed")
                     return
 
             if len(parts) == 3 and parts[0] == "api" and parts[1] == "preferences" and parts[2] == "compile":
                 if method == "POST":
                     self._handle_compile_preferences()
                 else:
-                    self._send_error(405, "method not allowed", "model_scheduler.method_not_allowed")
+                    self._send_error(405, "method not allowed", "agent_model_router.method_not_allowed")
                 return
 
             if len(parts) == 3 and parts[0] == "api" and parts[1] == "tasks":
@@ -310,24 +310,24 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                 elif method == "DELETE":
                     self._handle_delete_task(task_id)
                 else:
-                    self._send_error(405, "method not allowed", "model_scheduler.method_not_allowed")
+                    self._send_error(405, "method not allowed", "agent_model_router.method_not_allowed")
                 return
 
             if len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" and parts[3] == "result":
                 if method == "GET":
                     self._handle_get_task_result(parts[2])
                 else:
-                    self._send_error(405, "method not allowed", "model_scheduler.method_not_allowed")
+                    self._send_error(405, "method not allowed", "agent_model_router.method_not_allowed")
                 return
 
             if len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" and parts[3] == "cancel":
                 if method == "POST":
                     self._handle_cancel_task(parts[2])
                 else:
-                    self._send_error(405, "method not allowed", "model_scheduler.method_not_allowed")
+                    self._send_error(405, "method not allowed", "agent_model_router.method_not_allowed")
                 return
 
-            self._send_error(404, "not found", "model_scheduler.not_found")
+            self._send_error(404, "not found", "agent_model_router.not_found")
 
         def _handle_page(self) -> None:
             raw = _PAGE_HTML.encode("utf-8")
@@ -349,7 +349,7 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                 self._send_error(
                     400,
                     f"invalid status: {status!r} (must be one of {list(VALID_STATUSES)})",
-                    "model_scheduler.invalid_status",
+                    "agent_model_router.invalid_status",
                 )
                 return
 
@@ -358,7 +358,7 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                 raw_limit = _first_query(query, "limit")
                 limit = None if raw_limit is None else _parse_int(raw_limit, "limit")
             except ValueError as exc:
-                self._send_error(400, str(exc), "model_scheduler.invalid_query")
+                self._send_error(400, str(exc), "agent_model_router.invalid_query")
                 return
 
             try:
@@ -369,7 +369,7 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                     limit=limit,
                 )
             except ValueError as exc:
-                self._send_error(400, str(exc), "model_scheduler.invalid_query")
+                self._send_error(400, str(exc), "agent_model_router.invalid_query")
                 return
 
             self._send_json(200, {"tasks": [_task_to_public(task) for task in tasks]})
@@ -381,12 +381,12 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
 
             task_type = data.get("task_type")
             if not isinstance(task_type, str) or not task_type.strip():
-                self._send_error(400, "task_type must be a non-empty string", "model_scheduler.invalid_request")
+                self._send_error(400, "task_type must be a non-empty string", "agent_model_router.invalid_request")
                 return
 
             payload = data.get("payload")
             if not isinstance(payload, dict):
-                self._send_error(400, "payload must be a JSON object", "model_scheduler.invalid_request")
+                self._send_error(400, "payload must be a JSON object", "agent_model_router.invalid_request")
                 return
 
             priority = data.get("priority", "normal")
@@ -396,14 +396,14 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                 self._send_error(
                     400,
                     f"invalid priority: {priority!r} (must be one of {list(VALID_PRIORITIES)})",
-                    "model_scheduler.invalid_priority",
+                    "agent_model_router.invalid_priority",
                 )
                 return
 
             try:
                 deadline = _parse_deadline(data.get("deadline"))
             except ValueError as exc:
-                self._send_error(400, str(exc), "model_scheduler.invalid_deadline")
+                self._send_error(400, str(exc), "agent_model_router.invalid_deadline")
                 return
 
             try:
@@ -414,7 +414,7 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                     deadline=deadline,
                 )
             except ValueError as exc:
-                self._send_error(400, str(exc), "model_scheduler.invalid_request")
+                self._send_error(400, str(exc), "agent_model_router.invalid_request")
                 return
 
             self._send_json(
@@ -429,14 +429,14 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
         def _handle_get_task(self, task_id: str) -> None:
             task = self.app.get_task(task_id)
             if task is None:
-                self._send_error(404, "task not found", "model_scheduler.not_found")
+                self._send_error(404, "task not found", "agent_model_router.not_found")
                 return
             self._send_json(200, _task_to_public(task))
 
         def _handle_get_task_result(self, task_id: str) -> None:
             task = self.app.get_task(task_id)
             if task is None:
-                self._send_error(404, "task not found", "model_scheduler.not_found")
+                self._send_error(404, "task not found", "agent_model_router.not_found")
                 return
 
             result: dict[str, Any] = {
@@ -493,7 +493,7 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                 self._send_error(
                     400,
                     f"invalid mode: {mode!r} (must be one of {list(VALID_MODES)})",
-                    "model_scheduler.invalid_mode",
+                    "agent_model_router.invalid_mode",
                 )
                 return
 
@@ -502,7 +502,7 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                 try:
                     weights = Preferences(mode=mode, weights=weights).weights
                 except ValueError as exc:
-                    self._send_error(400, str(exc), "model_scheduler.invalid_preferences")
+                    self._send_error(400, str(exc), "agent_model_router.invalid_preferences")
                     return
 
             self._send_json(200, self.app.set_preferences_mode(mode, weights))
@@ -516,7 +516,7 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
                 self._send_error(
                     400,
                     "text must be a non-empty string",
-                    "model_scheduler.invalid_request",
+                    "agent_model_router.invalid_request",
                 )
                 return
             compiled = compile_intent(text)
@@ -536,19 +536,19 @@ def make_handler(app: TaskDashboardApp) -> type[BaseHTTPRequestHandler]:
             except ValueError:
                 length = 0
             if length <= 0:
-                self._send_error(400, "request body must be a JSON object", "model_scheduler.invalid_json")
+                self._send_error(400, "request body must be a JSON object", "agent_model_router.invalid_json")
                 return None
             if length > MAX_BODY_BYTES:
-                self._send_error(413, "request body too large", "model_scheduler.payload_too_large")
+                self._send_error(413, "request body too large", "agent_model_router.payload_too_large")
                 return None
             raw = self.rfile.read(length)
             try:
                 data = json.loads(raw.decode("utf-8"))
             except Exception:
-                self._send_error(400, "invalid JSON body", "model_scheduler.invalid_json")
+                self._send_error(400, "invalid JSON body", "agent_model_router.invalid_json")
                 return None
             if not isinstance(data, dict):
-                self._send_error(400, "request body must be a JSON object", "model_scheduler.invalid_request")
+                self._send_error(400, "request body must be a JSON object", "agent_model_router.invalid_request")
                 return None
             return data
 
@@ -599,7 +599,7 @@ def create_server(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python -m model_scheduler.taskserver",
+        prog="python -m agent_model_router.taskserver",
         description="Opportunistic Scheduling 看板 HTTP 服务",
     )
     parser.add_argument("--host", default=DEFAULT_HOST, help=f"监听地址（默认 {DEFAULT_HOST}）")
@@ -621,13 +621,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
     except Exception as exc:
-        print(f"model-scheduler: cannot create state dir {state_dir}: {exc}", file=sys.stderr)
+        print(f"agent-model-router: cannot create state dir {state_dir}: {exc}", file=sys.stderr)
         return 2
 
     httpd = create_server(args.host, args.port, state_dir=state_dir, executor=MockExecutor())
     host, port = httpd.server_address[:2]
 
-    print(f"model-scheduler v{__version__} Opportunistic Scheduling dashboard listening on http://{host}:{port}")
+    print(f"agent-model-router v{__version__} Opportunistic Scheduling dashboard listening on http://{host}:{port}")
     print(f"state_dir={state_dir}")
 
     try:
@@ -817,7 +817,7 @@ tr:hover td { background: rgba(128, 128, 128, .06); }
 <div class="container">
   <header class="page-header">
     <h1>Opportunistic Scheduling</h1>
-    <p>机会型调度：利用空闲资源窗口执行非紧急任务。版本 0.6.2</p>
+    <p>机会型调度：利用空闲资源窗口执行非紧急任务。版本 1.0.0</p>
   </header>
 
   <section>
@@ -945,7 +945,7 @@ tr:hover td { background: rgba(128, 128, 128, .06); }
   </div>
 
   <div class="message" id="message"></div>
-  <div class="footer">model-scheduler v0.6.2 · Opportunistic Scheduling dashboard · no external resources</div>
+  <div class="footer">agent-model-router v1.0.0 · Opportunistic Scheduling dashboard · no external resources</div>
 </div>
 
 <script>

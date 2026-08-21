@@ -1,9 +1,9 @@
-"""Tests for model_scheduler.benchmark (v0.6 benchmark 工具)."""
+"""Tests for agent_model_router.benchmark (v0.6 benchmark 工具)."""
 from __future__ import annotations
 
 import json
 
-from model_scheduler.benchmark import (
+from agent_model_router.benchmark import (
     BenchmarkConfig,
     format_report,
     generate_tasks,

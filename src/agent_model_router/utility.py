@@ -1,4 +1,4 @@
-"""model_scheduler.utility — v0.4 Utility 效用评分。
+"""agent_model_router.utility — v0.4 Utility 效用评分。
 
 综合质量、成本、延迟、健康度、额度压力、截止紧迫，为每个候选模型打一个
 可解释的效用分。所有分项均为 [0,1]；单候选评分按绝对分合成：

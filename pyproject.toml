@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "model-scheduler"
-version = "0.6.2"
+name = "agent-model-router"
+version = "1.0.0"
 description = "零依赖的 OpenAI 兼容模型智能路由调度器"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,7 +27,7 @@ classifiers = [
 dependencies = []
 
 [project.scripts]
-model-scheduler = "model_scheduler.server:main"
+agent-model-router = "agent_model_router.server:main"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]

@@ -6,7 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 API_DOC = REPO_ROOT / "docs" / "API.md"
-TASKSERVER_SRC = REPO_ROOT / "src" / "model_scheduler" / "taskserver.py"
+TASKSERVER_SRC = REPO_ROOT / "src" / "agent_model_router" / "taskserver.py"
 
 
 def test_api_doc_declared_paths_exist_in_taskserver():

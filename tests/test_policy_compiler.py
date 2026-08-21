@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler.policy_compiler import (
+from agent_model_router.policy_compiler import (
     CAPABILITY_REFERENCES,
     DEFAULT_MAX_LATENCY_MS,
     CompiledPolicy,
@@ -13,8 +13,8 @@ from model_scheduler.policy_compiler import (
     merge_policies,
     route_with_intent,
 )
-from model_scheduler.preferences import DEFAULT_WEIGHTS
-from model_scheduler.utility import DEFAULT_CONSTRAINTS, HardConstraints
+from agent_model_router.preferences import DEFAULT_WEIGHTS
+from agent_model_router.utility import DEFAULT_CONSTRAINTS, HardConstraints
 
 
 def make_candidate(

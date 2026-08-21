@@ -1,4 +1,4 @@
-"""model_scheduler.policy_compiler — v0.5 Policy Compiler 策略翻译器。
+"""agent_model_router.policy_compiler — v0.5 Policy Compiler 策略翻译器。
 
 把用户的自然语言意图（中文/英文关键词）翻译成 v0.4 评分流水线可执行的
 ``HardConstraints`` + 六分项权重 + mode + explanation。第一版为规则模板

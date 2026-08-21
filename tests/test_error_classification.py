@@ -9,9 +9,9 @@ from urllib import error, request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler.policy import ModelPolicy
-from model_scheduler.quota import COOLDOWN_SECONDS, QuotaTracker
-from model_scheduler.server import ProxyApp, create_server
+from agent_model_router.policy import ModelPolicy
+from agent_model_router.quota import COOLDOWN_SECONDS, QuotaTracker
+from agent_model_router.server import ProxyApp, create_server
 
 BASE_CONFIG = {
     "language": "en",
@@ -274,7 +274,7 @@ class ErrorClassificationTests(unittest.TestCase):
             raise error.URLError("connection refused")
 
         with mock.patch(
-            "model_scheduler.server.urllib.request.urlopen",
+            "agent_model_router.server.urllib.request.urlopen",
             side_effect=fake_urlopen,
         ):
             resp_status, body = self._post_json(
@@ -301,7 +301,7 @@ class ErrorClassificationTests(unittest.TestCase):
             raise error.URLError("connection refused")
 
         with mock.patch(
-            "model_scheduler.server.urllib.request.urlopen",
+            "agent_model_router.server.urllib.request.urlopen",
             side_effect=fake_urlopen,
         ):
             resp_status, body = self._post_json(

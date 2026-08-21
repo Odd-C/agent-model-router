@@ -6,8 +6,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-import model_scheduler.health as health_module
-from model_scheduler.health import HEALTH_WINDOW_SECONDS, ProviderHealth
+import agent_model_router.health as health_module
+from agent_model_router.health import HEALTH_WINDOW_SECONDS, ProviderHealth
 
 
 class ProviderHealthTests(unittest.TestCase):

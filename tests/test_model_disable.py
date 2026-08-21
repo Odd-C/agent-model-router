@@ -6,8 +6,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler.policy import ModelPolicy
-from model_scheduler.router import recommend_for_session
+from agent_model_router.policy import ModelPolicy
+from agent_model_router.router import recommend_for_session
 
 
 class ModelDisableTests(unittest.TestCase):

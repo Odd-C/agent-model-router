@@ -1,4 +1,4 @@
-"""model_scheduler.scheduler — 单进程任务调度器（v0.3 后端核心）。
+"""agent_model_router.scheduler — 单进程任务调度器（v0.3 后端核心）。
 
 职责：最小 defer 决策 + 轮询循环。不做并发 worker、不做分布式。
 scheduler 只做「任务 + 模型 + 时间窗口」的状态机调度；模型选择/打分

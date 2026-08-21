@@ -10,16 +10,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-import model_scheduler.benchmark as benchmark_module
-import model_scheduler.quota as quota_module
-import model_scheduler.taskserver as taskserver_module
-from model_scheduler.executor import MockExecutor
-from model_scheduler.health import ProviderHealth
-from model_scheduler.quota import QuotaTracker
-from model_scheduler.scheduler import TaskScheduler
-from model_scheduler.task import Task, TaskStore
-from model_scheduler.taskserver import create_server
-from model_scheduler.utility import _effective_weights
+import agent_model_router.benchmark as benchmark_module
+import agent_model_router.quota as quota_module
+import agent_model_router.taskserver as taskserver_module
+from agent_model_router.executor import MockExecutor
+from agent_model_router.health import ProviderHealth
+from agent_model_router.quota import QuotaTracker
+from agent_model_router.scheduler import TaskScheduler
+from agent_model_router.task import Task, TaskStore
+from agent_model_router.taskserver import create_server
+from agent_model_router.utility import _effective_weights
 
 
 def make_task(task_id="t1", status="queued", priority="normal", defer_until=None, deadline=None, attempts=0):
@@ -191,7 +191,7 @@ class TaskServerP2Tests(unittest.TestCase):
             taskserver_module.MAX_BODY_BYTES = old_limit
 
         self.assertEqual(status, 413)
-        self.assertEqual(data["error"]["type"], "model_scheduler.payload_too_large")
+        self.assertEqual(data["error"]["type"], "agent_model_router.payload_too_large")
         self.assertNotIn("detail", data["error"])
 
     def test_internal_server_error_does_not_leak_exception_detail(self):
@@ -211,7 +211,7 @@ class TaskServerP2Tests(unittest.TestCase):
 
         self.assertEqual(status, 500)
         self.assertEqual(data["error"]["message"], "internal server error")
-        self.assertEqual(data["error"]["type"], "model_scheduler.internal_error")
+        self.assertEqual(data["error"]["type"], "agent_model_router.internal_error")
         self.assertNotIn("detail", data["error"])
         self.assertNotIn("secret-internal-detail", json.dumps(data))
 

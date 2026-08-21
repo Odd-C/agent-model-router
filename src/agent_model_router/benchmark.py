@@ -1,4 +1,4 @@
-"""model_scheduler.benchmark — 路由策略基准对比工具（零第三方依赖）。
+"""agent_model_router.benchmark — 路由策略基准对比工具（零第三方依赖）。
 
 用可复现的合成任务集对比三种策略：
   - utility      : v0.4/v0.5 评分制（route_with_utility + HardConstraints）
@@ -9,7 +9,7 @@
 失败（fail_rate 概率 5xx/429，失败后尝试 fallback）与免费额度递减。
 
 用法：
-    PYTHONPATH=src python3 -m model_scheduler.benchmark --tasks 200 --seed 42 [--json out.json]
+    PYTHONPATH=src python3 -m agent_model_router.benchmark --tasks 200 --seed 42 [--json out.json]
 """
 from __future__ import annotations
 
@@ -702,8 +702,8 @@ def format_report(results: list[BenchmarkResult] | BenchmarkResult) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python -m model_scheduler.benchmark",
-        description="model-scheduler 路由策略基准对比（utility vs chain vs round-robin）",
+        prog="python -m agent_model_router.benchmark",
+        description="agent-model-router 路由策略基准对比（utility vs chain vs round-robin）",
     )
     parser.add_argument("--tasks", type=int, default=200, help="任务数（默认 200）")
     parser.add_argument("--seed", type=int, default=42, help="随机种子（默认 42）")

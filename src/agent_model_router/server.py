@@ -1,7 +1,7 @@
-"""model_scheduler.server — OpenAI 兼容代理层（零依赖，纯标准库）。
+"""agent_model_router.server — OpenAI 兼容代理层（零依赖，纯标准库）。
 
 用法：
-    python -m model_scheduler.server --config model-policy.json --host 127.0.0.1 --port 8765
+    python -m agent_model_router.server --config model-policy.json --host 127.0.0.1 --port 8765
 
 技术栈仅使用标准库：http.server.ThreadingHTTPServer + urllib.request。
 """
@@ -24,7 +24,7 @@ from .policy import ModelPolicy
 from .quota import QuotaTracker
 from .router import ModelRouter, format_model_key
 
-__version__ = "0.6.2"
+__version__ = "1.0.0"
 
 logger = logging.getLogger(__name__)
 
@@ -310,7 +310,7 @@ def make_handler(app: ProxyApp):
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
-        server_version = "model-scheduler/" + __version__
+        server_version = "agent-model-router/" + __version__
 
         def log_message(self, fmt, *args):
             try:
@@ -326,14 +326,14 @@ def make_handler(app: ProxyApp):
             elif path == "/v1/models":
                 self._handle_models()
             else:
-                self._send_error(404, "not found", "model_scheduler.not_found")
+                self._send_error(404, "not found", "agent_model_router.not_found")
 
         def do_POST(self):
             path = urllib.parse.urlsplit(self.path).path
             if path == "/v1/chat/completions":
                 self._handle_chat()
             else:
-                self._send_error(404, "not found", "model_scheduler.not_found")
+                self._send_error(404, "not found", "agent_model_router.not_found")
 
         def _handle_health(self):
             self._send_json(200, {"status": "ok", "version": __version__})
@@ -361,7 +361,7 @@ def make_handler(app: ProxyApp):
             self._send_error(
                 502,
                 "upstream unreachable",
-                "model_scheduler.upstream_unreachable",
+                "agent_model_router.upstream_unreachable",
                 detail=str(exc),
             )
 
@@ -401,10 +401,10 @@ def make_handler(app: ProxyApp):
             try:
                 payload = json.loads(raw.decode("utf-8"))
             except Exception:
-                self._send_error(400, "invalid JSON body", "model_scheduler.invalid_json")
+                self._send_error(400, "invalid JSON body", "agent_model_router.invalid_json")
                 return
             if not isinstance(payload, dict):
-                self._send_error(400, "request body must be a JSON object", "model_scheduler.invalid_request")
+                self._send_error(400, "request body must be a JSON object", "agent_model_router.invalid_request")
                 return
 
             # 1. 提取 messages 文本，交给调度器做难度/紧急度评估。
@@ -413,7 +413,7 @@ def make_handler(app: ProxyApp):
                 decision = self.app.router.recommend_for_session(text)
             except Exception:
                 logger.exception("routing decision failed")
-                self._send_error(500, "routing decision failed", "model_scheduler.routing_failed")
+                self._send_error(500, "routing decision failed", "agent_model_router.routing_failed")
                 return
 
             decision = dict(decision or {})
@@ -423,7 +423,7 @@ def make_handler(app: ProxyApp):
                 self._send_error(
                     503,
                     "no model available",
-                    "model_scheduler.no_model",
+                    "agent_model_router.no_model",
                     reason=decision.get("reason", ""),
                 )
                 return
@@ -436,7 +436,7 @@ def make_handler(app: ProxyApp):
                 self._send_error(
                     503,
                     "provider not configured: " + provider_name,
-                    "model_scheduler.provider_not_configured",
+                    "agent_model_router.provider_not_configured",
                     reason=decision.get("reason", ""),
                 )
                 return
@@ -445,7 +445,7 @@ def make_handler(app: ProxyApp):
                 self._send_error(
                     503,
                     "provider base_url is empty: " + provider_name,
-                    "model_scheduler.provider_not_configured",
+                    "agent_model_router.provider_not_configured",
                     reason=decision.get("reason", ""),
                 )
                 return
@@ -558,7 +558,7 @@ def make_handler(app: ProxyApp):
             """流已开始后出错：向客户端发送一条错误 SSE 事件后关闭。"""
             try:
                 data = json.dumps(
-                    {"error": {"message": message, "type": "model_scheduler.stream_error"}},
+                    {"error": {"message": message, "type": "agent_model_router.stream_error"}},
                     ensure_ascii=False,
                 )
                 self.wfile.write(("data: " + data + "\n\n").encode("utf-8"))
@@ -594,8 +594,8 @@ def _resolve_state_config(args) -> tuple[Path, Path]:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python -m model_scheduler.server",
-        description="model-scheduler OpenAI compatible proxy",
+        prog="python -m agent_model_router.server",
+        description="agent-model-router OpenAI compatible proxy",
     )
     parser.add_argument("--config", default=None, help="model-policy.json 路径（默认：state_dir/model-policy.json）")
     parser.add_argument("--host", default=DEFAULT_HOST, help="监听地址（默认 127.0.0.1）")
@@ -611,7 +611,7 @@ def main(argv=None) -> int:
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
     except Exception as exc:
-        print(f"model-scheduler: cannot create state dir {state_dir}: {exc}", file=sys.stderr)
+        print(f"agent-model-router: cannot create state dir {state_dir}: {exc}", file=sys.stderr)
         return 2
 
     policy_store = _ConfigModelPolicy(state_dir, config_path)
@@ -620,7 +620,7 @@ def main(argv=None) -> int:
 
     if not providers:
         print(
-            f"model-scheduler: no providers configured in {config_path}; "
+            f"agent-model-router: no providers configured in {config_path}; "
             "add a 'providers' section to model-policy.json",
             file=sys.stderr,
         )
@@ -630,7 +630,7 @@ def main(argv=None) -> int:
     httpd = create_server(args.host, args.port, app)
     host, port = httpd.server_address[:2]
 
-    print(f"model-scheduler v{__version__} listening on http://{host}:{port}")
+    print(f"agent-model-router v{__version__} listening on http://{host}:{port}")
     print(f"state_dir={state_dir} config={config_path} providers={len(providers)} models={model_count}")
 
     try:

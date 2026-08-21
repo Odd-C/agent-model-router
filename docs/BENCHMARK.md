@@ -9,8 +9,8 @@
 ## 用法
 
 ```bash
-PYTHONPATH=src python3 -m model_scheduler.benchmark --tasks 200 --seed 42
-PYTHONPATH=src python3 -m model_scheduler.benchmark --tasks 500 --seed 42 --json out.json
+PYTHONPATH=src python3 -m agent_model_router.benchmark --tasks 200 --seed 42
+PYTHONPATH=src python3 -m agent_model_router.benchmark --tasks 500 --seed 42 --json out.json
 ```
 
 ## 真实并发压测（tests/test_concurrency_load.py）
@@ -77,7 +77,7 @@ python3 -m pytest tests/test_concurrency_load.py -v -s
 ## 报告示例
 
 ```bash
-PYTHONPATH=src python3 -m model_scheduler.benchmark --tasks 200 --seed 42
+PYTHONPATH=src python3 -m agent_model_router.benchmark --tasks 200 --seed 42
 ```
 
 ```markdown

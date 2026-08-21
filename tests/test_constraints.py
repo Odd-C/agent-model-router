@@ -5,8 +5,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler import policy, quota
-from model_scheduler.utility import (
+from agent_model_router import policy, quota
+from agent_model_router.utility import (
     DEFAULT_CONSTRAINTS,
     HardConstraints,
     route_with_utility,

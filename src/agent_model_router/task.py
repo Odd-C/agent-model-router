@@ -1,4 +1,4 @@
-"""model_scheduler.task — 任务模型与 StateStore 持久化。
+"""agent_model_router.task — 任务模型与 StateStore 持久化。
 
 任务模型保持「干净」：只描述「做什么 + 何时能做 + 优先级」，不描述
 「怎么做」。`payload` 是不透明 dict，scheduler 永不解析，只有 Executor 解释。

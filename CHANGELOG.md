@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.0] - 2026-08-21
+
+### Changed
+- **项目改名**：`model-scheduler` → `agent-model-router`（老大拍板：无旧用户，直接破坏性改名）
+  - Python 包：`model_scheduler` → `agent_model_router`
+  - PyPI 包名：`model-scheduler` → `agent-model-router`
+  - CLI：`model-scheduler` → `agent-model-router`
+  - GitHub 仓库：`Odd-C/model-scheduler` → `Odd-C/agent-model-router`
+  - 状态文件（`model-policy.json` / `model-quota.json` / `model-scheduler.db` 等）**保持不变**（与包名无关，旧 state 无缝迁移）
+
 ## [0.6.2] - 2026-08-21
 
 ### 修复

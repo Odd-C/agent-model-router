@@ -1,4 +1,4 @@
-"""model_scheduler.router — 智能模型调度器·决策引擎（核心）。
+"""agent_model_router.router — 智能模型调度器·决策引擎（核心）。
 
 决策按 ROUTE_CHAINS（role 链）驱动，与具体模型名解耦：
   urgent   -> stable -> paid-fallback

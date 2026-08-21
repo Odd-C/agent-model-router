@@ -1,6 +1,6 @@
 # API Contract (model-scheduler taskserver v0.6.2)
 
-本文档是 `model_scheduler.taskserver` 的稳定 HTTP API 契约，与当前实现严格一致。
+本文档是 `agent_model_router.taskserver` 的稳定 HTTP API 契约，与当前实现严格一致。
 taskserver 是单文件看板后端 + 内嵌 HTML 前端，仅使用标准库，零第三方依赖。
 
 - Base URL：`http://<host>:<port>`
@@ -11,14 +11,14 @@ taskserver 是单文件看板后端 + 内嵌 HTML 前端，仅使用标准库，
 {
   "error": {
     "message": "human readable message",
-    "type": "model_scheduler.<error_type>"
+    "type": "agent_model_router.<error_type>"
   }
 }
 ```
 
 - 500 响应额外携带 `detail` 字段（内部异常信息）。
-- 未实现的 method 返回 `405`，错误类型 `model_scheduler.method_not_allowed`。
-- 未匹配路径返回 `404`，错误类型 `model_scheduler.not_found`。
+- 未实现的 method 返回 `405`，错误类型 `agent_model_router.method_not_allowed`。
+- 未匹配路径返回 `404`，错误类型 `agent_model_router.not_found`。
 - `{task_id}` 为任务 ID 占位符。
 
 ## 页面
@@ -64,7 +64,7 @@ taskserver 是单文件看板后端 + 内嵌 HTML 前端，仅使用标准库，
 {"task_id": "0123...", "status": "queued", "defer_until": null}
 ```
 
-错误码：`400`（`model_scheduler.invalid_request` / `invalid_priority` / `invalid_deadline` / `invalid_json`）。
+错误码：`400`（`agent_model_router.invalid_request` / `invalid_priority` / `invalid_deadline` / `invalid_json`）。
 
 ### 任务列表
 
@@ -104,7 +104,7 @@ Query 参数：
 }
 ```
 
-错误码：`400`（`model_scheduler.invalid_status` / `invalid_query`）。
+错误码：`400`（`agent_model_router.invalid_status` / `invalid_query`）。
 
 ### 任务详情
 
@@ -114,7 +114,7 @@ Query 参数：
 
 成功响应 `200`：单个任务公共字段（同列表元素，不含 `payload`）。
 
-错误码：`404`（`model_scheduler.not_found`）。
+错误码：`404`（`agent_model_router.not_found`）。
 
 ### 任务结果
 
@@ -138,7 +138,7 @@ Query 参数：
 未完成任务会返回 `"result": null`、`"error": null`、`"pending": true`。
 已失败/取消任务返回 `"result": null` 与 `"error": {...}`。
 
-错误码：`404`（`model_scheduler.not_found`）。
+错误码：`404`（`agent_model_router.not_found`）。
 
 ### 取消任务
 
@@ -218,7 +218,7 @@ Query 参数：
 
 成功响应 `200`：同 `GET` `/api/preferences`。
 
-错误码：`400`（`model_scheduler.invalid_mode` / `invalid_preferences` / `invalid_json`）。
+错误码：`400`（`agent_model_router.invalid_mode` / `invalid_preferences` / `invalid_json`）。
 
 ### 自然语言偏好翻译
 
@@ -243,13 +243,13 @@ Query 参数：
 }
 ```
 
-错误码：`400`（`model_scheduler.invalid_request` / `invalid_json`）。
+错误码：`400`（`agent_model_router.invalid_request` / `invalid_json`）。
 
 ## 错误码汇总
 
 | 错误码 | 触发场景 | error.type 示例 |
 |---|---|---|
-| 400 | 非法 query/body/priority/deadline/mode/JSON | `model_scheduler.invalid_request` 等 |
-| 404 | 路径不存在或任务不存在 | `model_scheduler.not_found` |
-| 405 | method 不允许 | `model_scheduler.method_not_allowed` |
-| 500 | 未捕获内部异常 | `model_scheduler.internal_error` |
+| 400 | 非法 query/body/priority/deadline/mode/JSON | `agent_model_router.invalid_request` 等 |
+| 404 | 路径不存在或任务不存在 | `agent_model_router.not_found` |
+| 405 | method 不允许 | `agent_model_router.method_not_allowed` |
+| 500 | 未捕获内部异常 | `agent_model_router.internal_error` |

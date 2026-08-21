@@ -7,9 +7,9 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler.executor import MockExecutor
-from model_scheduler.scheduler import TaskScheduler
-from model_scheduler.task import Task, TaskStore
+from agent_model_router.executor import MockExecutor
+from agent_model_router.scheduler import TaskScheduler
+from agent_model_router.task import Task, TaskStore
 
 
 def make_task(task_id="t1", status="queued", priority="normal", defer_until=None, deadline=None, attempts=0):
@@ -113,7 +113,7 @@ class SchedulerDeadlineBoundaryTests(unittest.TestCase):
         self.assertEqual(stored.defer_until, 2500.0)
 
     def test_submit_with_deadline_equal_now_is_expired(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             scheduler = TaskScheduler(self.store, MockExecutor(result={"ok": True}))
             task = scheduler.submit("text", {"x": 1}, deadline=1000.0)
 

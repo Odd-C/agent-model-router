@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler import (
+from agent_model_router import (
     format_model_key,
     format_selector_key,
     parse_model_key,

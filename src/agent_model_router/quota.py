@@ -1,4 +1,4 @@
-"""model_scheduler.quota — 免费额度本地近似跟踪。
+"""agent_model_router.quota — 免费额度本地近似跟踪。
 
 状态文件 model-quota.json：{"calls": [{"model", "provider", "ts"} ...]}
 窗口：5 小时滑动窗口。本地计数只作路由参考，真实额度以提供方 API 为准。

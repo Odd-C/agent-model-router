@@ -10,9 +10,9 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler import taskserver
-from model_scheduler.executor import MockExecutor
-from model_scheduler.taskserver import create_server
+from agent_model_router import taskserver
+from agent_model_router.executor import MockExecutor
+from agent_model_router.taskserver import create_server
 
 
 class TaskServerTests(unittest.TestCase):
@@ -87,7 +87,7 @@ class TaskServerTests(unittest.TestCase):
         status, data = self._request("GET", "/api/health")
         self.assertEqual(status, 200)
         self.assertEqual(data["status"], "ok")
-        self.assertEqual(data["version"], "0.6.2")
+        self.assertEqual(data["version"], "1.0.0")
 
     def test_index_page_contains_title(self):
         status, text, headers = self._request_text("GET", "/")
@@ -109,7 +109,7 @@ class TaskServerTests(unittest.TestCase):
         self.assertIn('id="pref-compile-msg"', taskserver._PAGE_HTML)
 
     def test_submit_high_queued_and_low_deferred(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             status, high = self._submit(priority="high")
             self.assertEqual(status, 200)
             self.assertEqual(high["status"], "queued")
@@ -122,7 +122,7 @@ class TaskServerTests(unittest.TestCase):
             self.assertEqual(low["defer_until"], 1600.0)  # 1000 + 300 * 2
 
     def test_submit_priority_defaults_to_normal(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             status, task = self._submit(priority=None)
             self.assertEqual(status, 200)
             # 默认 normal，base_delay=300，normal 权重 1.0 -> 1300.0
@@ -130,7 +130,7 @@ class TaskServerTests(unittest.TestCase):
             self.assertEqual(task["defer_until"], 1300.0)
 
     def test_submit_accepts_iso_deadline_and_epoch_deadline(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             status, task = self._submit(priority="normal", deadline="1970-01-01T00:20:00Z")
             self.assertEqual(status, 200)
             self.assertEqual(task["status"], "queued")
@@ -153,7 +153,7 @@ class TaskServerTests(unittest.TestCase):
         self.assertEqual(status, 400)
 
     def test_list_filters_detail(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             _, high = self._submit(task_type="text", priority="high")
             _, low = self._submit(task_type="coding", priority="low")
 
@@ -209,7 +209,7 @@ class TaskServerTests(unittest.TestCase):
         self.assertEqual(status, 404)
 
     def test_cancel_and_delete(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             _, task = self._submit(priority="high")
 
         status, data = self._request("POST", f"/api/tasks/{task['task_id']}/cancel")
@@ -232,12 +232,12 @@ class TaskServerTests(unittest.TestCase):
         self.assertFalse(data["ok"])
 
     def test_tick_deferred_to_queued_to_done_and_stats(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             _, task = self._submit(task_type="batch", priority="low")
             self.assertEqual(task["status"], "deferred")
             self.assertEqual(task["defer_until"], 1600.0)
 
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=2000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=2000.0):
             status, data = self._request("POST", "/api/tick")
             self.assertEqual(status, 200)
             self.assertIn(task["task_id"], data["processed"])
@@ -258,7 +258,7 @@ class TaskServerTests(unittest.TestCase):
         self.assertEqual(stats["total_cost"], 0.5)
 
     def test_stats_counts(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             self._submit(task_type="text", priority="high")
             self._submit(task_type="image", priority="normal")
 
@@ -294,10 +294,10 @@ class TaskServerTests(unittest.TestCase):
         self.assertEqual(status, 400)
 
     def test_get_task_result_done(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             _, task = self._submit(priority="high")
 
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=2000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=2000.0):
             status, _ = self._request("POST", "/api/tick")
             self.assertEqual(status, 200)
 
@@ -311,7 +311,7 @@ class TaskServerTests(unittest.TestCase):
         self.assertNotIn("pending", data)
 
     def test_get_task_result_pending(self):
-        with mock.patch("model_scheduler.scheduler.time.time", return_value=1000.0):
+        with mock.patch("agent_model_router.scheduler.time.time", return_value=1000.0):
             _, task = self._submit(priority="low")
 
         status, data = self._request("GET", f"/api/tasks/{task['task_id']}/result")

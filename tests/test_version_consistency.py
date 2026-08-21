@@ -16,16 +16,16 @@ REPO = Path(__file__).resolve().parent.parent
 
 KEY_FILES = [
     "pyproject.toml",
-    "src/model_scheduler/__init__.py",
-    "src/model_scheduler/server.py",
-    "src/model_scheduler/taskserver.py",
+    "src/agent_model_router/__init__.py",
+    "src/agent_model_router/server.py",
+    "src/agent_model_router/taskserver.py",
     "tests/test_server.py",
     "tests/test_taskserver.py",
 ]
 
 
 def current_version() -> str:
-    init = (REPO / "src/model_scheduler/__init__.py").read_text(encoding="utf-8")
+    init = (REPO / "src/agent_model_router/__init__.py").read_text(encoding="utf-8")
     m = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', init)
     if not m:
         raise AssertionError("未找到 __version__")

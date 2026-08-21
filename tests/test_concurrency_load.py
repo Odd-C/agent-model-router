@@ -21,12 +21,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_scheduler.executor import MockExecutor
-from model_scheduler.policy import list_models
-from model_scheduler.quota import QuotaTracker
-from model_scheduler.scheduler import TaskScheduler
-from model_scheduler.task import Task, TaskStore
-from model_scheduler.utility import route_with_utility
+from agent_model_router.executor import MockExecutor
+from agent_model_router.policy import list_models
+from agent_model_router.quota import QuotaTracker
+from agent_model_router.scheduler import TaskScheduler
+from agent_model_router.task import Task, TaskStore
+from agent_model_router.utility import route_with_utility
 
 N_THREADS = 8
 N_CALLS = 200          # 每线程
@@ -41,8 +41,8 @@ def _route_once() -> None:
 
 def _record_worker(state_dir: str, prefix: str, count: int, q) -> None:
     """子进程：并发 record_failure / quota 写入 SQLite。"""
-    import model_scheduler as ms
-    from model_scheduler.quota import QuotaTracker
+    import agent_model_router as ms
+    from agent_model_router.quota import QuotaTracker
     ms.configure_state_dir(state_dir)
     t = QuotaTracker(state_dir)
     for i in range(count):

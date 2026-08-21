@@ -1,4 +1,4 @@
-"""model_scheduler.store — StateStore 抽象与 JSON / SQLite 双后端。
+"""agent_model_router.store — StateStore 抽象与 JSON / SQLite 双后端。
 
 v0.6 起，TaskStore 不再直接读写 JSON 文件，而是通过 StateStore 统一
 接口持久化。value 一律为 JSON 字符串，由调用方负责序列化/反序列化。
