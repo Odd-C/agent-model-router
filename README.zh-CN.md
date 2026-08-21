@@ -12,17 +12,16 @@ agent-model-router 是一个**零第三方依赖的 LLM 调度库**：给「当�
 
 ## 架构一览
 
-从「原始任务 + 意图」到「可推荐的模型」，完整决策管线：
+```mermaid
+flowchart TD
+    A["任务 + 意图<br/>task_type / priority / deadline"] --> B
+    B["Policy Compiler<br/>意图 → 硬约束 + 权重"]
+    B --> C["硬约束先砍<br/>cost / quota / cooldown / deadline / health / capability"]
+    C --> D["六维 Utility 评分<br/>quality / cost / latency / health / quota / deadline"]
+    D --> E["推荐结果<br/>{model, provider, score, breakdown, why}"]
+```
 
-| 步骤 | 作用 |
-|---|---|
-| **任务 + 意图** | 输入：`task_type` / `priority` / `deadline` + 自然语言意图（「要便宜点的」） |
-| **Policy Compiler**（v0.5+） | 意图 → 硬约束 + 权重（「要便宜点的」→ `{cost_max: "free", 成本优先}`） |
-| **硬约束先砍后评**（v0.4+） | 不可谈判过滤：cost 上限 / quota 耗尽 / cooldown / deadline 不可行 / health 红线 / 能力上下限（`max_latency_ms`、`min_quality_tier`、`min_capability_pct`） |
-| **六维 Utility 评分** | 候选集内 min-max 归一化后加权：质量 / 成本 / 延迟 / 健康 / 额度 / 截止 |
-| **推荐** | 最高分 → `{model, provider, score, breakdown, why}` — 可解释 |
-
-每一层都是纯标准库 + JSON 驱动：模型画像放在 `model-policy.json`（**改配置不改代码**），每次决策都返回 `breakdown` + `why`——「为什么选这个模型」永远有答案。
+模型画像声明在 `model-policy.json`；每次决策返回 `breakdown` 与 `why`。
 
 ## 为什么做这个库
 

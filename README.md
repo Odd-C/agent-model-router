@@ -12,17 +12,16 @@
 
 ## Architecture at a glance
 
-The whole decision pipeline — from a raw task + intent to a recommendable model:
+```mermaid
+flowchart TD
+    A["task + intent<br/>task_type / priority / deadline"] --> B
+    B["Policy Compiler<br/>intent → hard constraints + weights"]
+    B --> C["hard constraints first<br/>cost / quota / cooldown / deadline / health / capability"]
+    C --> D["six-dimension utility scoring<br/>quality / cost / latency / health / quota / deadline"]
+    D --> E["recommendation<br/>{model, provider, score, breakdown, why}"]
+```
 
-| Step | What it does |
-|---|---|
-| **Task + intent** | input: `task_type` / `priority` / `deadline` + natural-language intent ("make it cheap") |
-| **Policy Compiler** (v0.5+) | intent → hard constraints + weights (`"make it cheap"` → `{cost_max: "free", cost-first}`) |
-| **Hard constraints first** (v0.4+) | non-negotiable filter: cost cap / quota exhausted / cooldown / deadline infeasible / health red-line / capability bounds (`max_latency_ms`, `min_quality_tier`, `min_capability_pct`) |
-| **Six-dimension utility scoring** | min-max normalize + weight: quality / cost / latency / health / quota / deadline |
-| **Recommendation** | highest score → `{model, provider, score, breakdown, why}` — explainable |
-
-Every step is pure stdlib and JSON-driven: model profiles live in `model-policy.json` (**change config, not code**), and every decision returns a `breakdown` + `why` — so "why this model?" always has an answer.
+Model profiles are declared in `model-policy.json`; every decision returns a `breakdown` and a `why`.
 
 ## Why this library
 
