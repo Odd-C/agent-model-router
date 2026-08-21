@@ -10,15 +10,14 @@ agent-model-router 是一个**零第三方依赖的 LLM 调度库**：给「当�
 
 **一句话定位**：从「哪个模型还能用」到「哪个模型最划算」。
 
-## 架构一览
+## 决策模块
 
-```mermaid
-flowchart TD
-    A["任务 + 意图<br/>task_type / priority / deadline"] --> B
-    B["Policy Compiler<br/>意图 → 硬约束 + 权重"]
-    B --> C["硬约束先砍<br/>cost / quota / cooldown / deadline / health / capability"]
-    C --> D["六维 Utility 评分<br/>quality / cost / latency / health / quota / deadline"]
-    D --> E["推荐结果<br/>{model, provider, score, breakdown, why}"]
+```text
+route_with_intent(task, models, "要便宜点的")
+  → Policy Compiler:  "要便宜点的" → {cost_max: "free", 成本优先}
+  → 硬约束先砍:        quota / cooldown / deadline / health / capability
+  → Utility 评分:      quality / cost / latency / health / quota / deadline
+  → 推荐结果:          {model, provider, score, breakdown, why}
 ```
 
 模型画像声明在 `model-policy.json`；每次决策返回 `breakdown` 与 `why`。

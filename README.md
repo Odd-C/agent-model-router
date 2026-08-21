@@ -10,15 +10,14 @@
 
 **One-liner**: from "which model still works" to "which model is most cost-effective".
 
-## Architecture at a glance
+## Decision module
 
-```mermaid
-flowchart TD
-    A["task + intent<br/>task_type / priority / deadline"] --> B
-    B["Policy Compiler<br/>intent → hard constraints + weights"]
-    B --> C["hard constraints first<br/>cost / quota / cooldown / deadline / health / capability"]
-    C --> D["six-dimension utility scoring<br/>quality / cost / latency / health / quota / deadline"]
-    D --> E["recommendation<br/>{model, provider, score, breakdown, why}"]
+```text
+route_with_intent(task, models, "make it cheap")
+  → Policy Compiler:  "make it cheap" → {cost_max: "free", cost-first}
+  → hard constraints: quota / cooldown / deadline / health / capability
+  → utility scoring:  quality / cost / latency / health / quota / deadline
+  → recommendation:   {model, provider, score, breakdown, why}
 ```
 
 Model profiles are declared in `model-policy.json`; every decision returns a `breakdown` and a `why`.
