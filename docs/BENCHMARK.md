@@ -3,11 +3,32 @@
 `src/model_scheduler/benchmark.py` 是零第三方依赖的本地基准工具，用可复现的合成任务集
 对比三种路由策略，输出结构化报告（成功率 / 成本 / P95 延迟 / fallback rate / quota exhaustion）。
 
+> **注意**：策略对比 benchmark 是**合成模拟**（库内定义的成本/延迟模型），用于策略间相对比较，
+> 不代表真实 provider 性能。**真实并发能力**用 `tests/test_concurrency_load.py` 测量（见下）。
+
 ## 用法
 
 ```bash
 PYTHONPATH=src python3 -m model_scheduler.benchmark --tasks 200 --seed 42
 PYTHONPATH=src python3 -m model_scheduler.benchmark --tasks 500 --seed 42 --json out.json
+```
+
+## 真实并发压测（tests/test_concurrency_load.py）
+
+多线程/多进程真实并发测量（本机实测，非合成模拟）：
+
+| 场景 | 结果 |
+|---|---|
+| 路由 8 线程并发 | ~300 QPS，p50=21.6ms，p95=49.5ms |
+| quota 写入 8 线程 | ~102 QPS（锁内全量读改写，见下） |
+| SQLite 多进程并发写 | ~664 QPS，100 条全落不丢 |
+| tick 并发负载 | 50 任务全 done，无 running 残留 |
+
+**已知瓶颈**：`QuotaTracker.record_call` 每次持锁做「load + filter + append + 全量 save」，
+多线程下约 102 QPS。若你的生产场景每请求都记账，建议评估是否需要批量写/更细粒度锁。
+
+```bash
+python3 -m pytest tests/test_concurrency_load.py -v -s
 ```
 
 - `--tasks`：任务数，默认 200（建议 100~1000）。
