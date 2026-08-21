@@ -1,4 +1,4 @@
-# Benchmark 工具（v0.6.0）
+# Benchmark 工具（v0.6.2）
 
 `src/model_scheduler/benchmark.py` 是零第三方依赖的本地基准工具，用可复现的合成任务集
 对比三种路由策略，输出结构化报告（成功率 / 成本 / P95 延迟 / fallback rate / quota exhaustion）。

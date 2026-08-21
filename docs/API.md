@@ -1,4 +1,4 @@
-# API Contract (model-scheduler taskserver v0.6.0)
+# API Contract (model-scheduler taskserver v0.6.2)
 
 本文档是 `model_scheduler.taskserver` 的稳定 HTTP API 契约，与当前实现严格一致。
 taskserver 是单文件看板后端 + 内嵌 HTML 前端，仅使用标准库，零第三方依赖。

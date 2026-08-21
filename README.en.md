@@ -2,11 +2,11 @@
 
 [English](README.en.md) | [中文](README.md)
 
-**MIT License** · **Python 3.10+** · **Zero Dependencies** · **88 tests passing**
+**MIT License** · **Python 3.10+** · **Zero Dependencies** · **279 tests passing**
 
 ---
 
-**model-scheduler** is an intelligent model scheduler: model profiling + free-quota tracking + routing decisions, packaged as a zero-dependency pure-Python standard-library library. Any OpenAI-compatible API consumer can plug it in.
+**model-scheduler** is an intelligent model scheduler: model profiling + free-quota tracking + routing decisions + task scheduling, packaged as a zero-dependency pure-Python standard-library library. Any OpenAI-compatible API consumer can plug it in. From "which model still works" to "which model is most cost-effective" — Utility scoring, hard constraints, Policy Compiler natural-language intents, a task system, and a dashboard are all included.
 
 ## Why this library
 
@@ -59,10 +59,75 @@ Routing groups difficulty into branches, each walking a role chain (`ROUTE_CHAIN
 |---|---|
 | urgent | `stable` → `paid-fallback` |
 | difficulty >= 4 | `free-flagship` → `stable` → `paid-fallback` |
-| difficulty 2-3 | `free-bulk` → `free-preview` → `free-flagship` → `paid-fallback` |
-| difficulty 0-1 | `free-bulk` → `free-preview` → `paid-fallback` |
+| Difficulty 2-3 | `free-bulk` → `free-preview` → `free-flagship` → `paid-fallback` |
+| Difficulty 0-1 | `free-bulk` → `free-preview` → `paid-fallback` |
 
-Switching models = editing the `role` field in the profile table, **no routing code changes**.
+Switch models by editing the `role` field in the profile table — **no routing code changes**.
+
+> **v0.4+ upgrade path**: role chains are the v0.2 default. Since v0.4, **Utility scoring** (`route_with_utility`) scores candidates across six normalized dimensions (quality/cost/latency/health/quota/deadline) with HardConstraints applied before scoring. Benchmarks: utility scoring saves ~69% cost and cuts latency by 43% vs role chains. New integrations should use scoring; role chains remain for backward compatibility.
+
+### Utility scoring (v0.4+)
+
+```python
+from model_scheduler.utility import route_with_utility, HardConstraints
+from model_scheduler.policy import list_models
+
+result = route_with_utility(
+    {"task_type": "coding", "priority": "high", "deadline": None},
+    list_models(),
+    constraints=HardConstraints(cost_max="free"),   # filter first, then score
+)
+# → {model, provider, score, breakdown: {quality_fit, cost_penalty, ...}, why}
+```
+
+- Six dimensions: quality_fit / cost_penalty / latency_penalty / failure_risk / quota_pressure / deadline_pressure
+- Candidate-set min-max normalization before weighting (equal weights ≠ equal impact)
+- Breakdown exposes three layers (raw / normalized / weighted) to explain "why A over B"
+- Capability constraints: `max_latency_ms` / `min_quality_tier` / `min_capability_pct`; image/vision tasks enforce vision capability (text-only models get quality_fit=0)
+
+### Policy Compiler (v0.5+, natural-language intents)
+
+```python
+from model_scheduler.policy_compiler import compile_intent, route_with_intent
+
+cp = compile_intent("要便宜点的")   # also: "make it cheap"
+# → CompiledPolicy{constraints: {cost_max: "free"}, weights: {cost_penalty: 3.0}, mode: "cost-first", explanation}
+
+result = route_with_intent(
+    {"task_type": "coding", "priority": "high", "deadline": None},
+    list_models(),
+    "高质量但不要太贵",   # natural language → hard-constraint union + quality weights
+)
+```
+
+Keyword-rule matching in Chinese and English (no NLP needed): speed ("尽快"/"3秒" → latency-first + max_latency_ms), cost ("便宜"/"free" → cost-first + cost_max=free), quality ("高质量"/"flagship" → quality-first + min_quality_tier), capability percentage ("达到 gpt-4o 的 80%" → pct + reference); unmatched falls back to balanced.
+
+### Task system (v0.3+)
+
+Task model (task_id / task_type / priority / deadline / defer_until / status / payload) + state machine + TaskStore persistence:
+
+```python
+from model_scheduler.task import TaskStore, Task
+from model_scheduler.scheduler import TaskScheduler
+from model_scheduler.executor import MockExecutor
+
+store = TaskStore(state_dir, backend="sqlite")   # json / sqlite backends
+scheduler = TaskScheduler(store, MockExecutor())
+task = scheduler.submit("text", {}, priority="high", deadline=1_800_000_000)
+scheduler.tick(now=1_800_000_100)                # process queued/deferred
+```
+
+- State machine: queued → running → done/failed; deferred → queued by defer_until; expired on deadline
+- Degradation matrix: error classification (429→cooldown-retry / 5xx→switch candidate / 400-403→no retry) recorded in `last_error.action_taken`
+- ProviderHealth: sliding-window health profile (success_rate / p50 / p95 / failure_risk)
+
+### Dashboard (taskserver, v0.3+)
+
+```bash
+PYTHONPATH=src python -m model_scheduler.taskserver --port 8099
+```
+
+Opportunistic Scheduling dashboard: task list / submit / manual tick / four preference modes / model profiles / A2A endpoints (submit task / query / fetch result). Pure stdlib, no CDN or external resources.
 
 ### Peak hours
 
@@ -87,11 +152,17 @@ The paid-fallback warning ("peak price doubled" in `reason`) is also evaluated a
 ## Features
 
 - Pure Python standard library, zero third-party runtime dependencies;
-- Parameterizable state directory: `LLM_ROUTER_STATE_DIR` env var, `configure_state_dir()`, or constructor `state_dir` argument;
-- Zero I/O side effects on import: directories are only created on first state read/write;
-- Thread-safe quota tracking (`threading.Lock`);
+- Three routing options: role chains (v0.2) / Utility scoring (v0.4+) / Policy Compiler natural-language intents (v0.5+);
+- Task system (v0.3+): Task state machine + TaskStore persistence (Json / SQLite backends, SQLite cross-process atomic) + degradation matrix + ProviderHealth;
+- Explainable decisions: Utility scoring returns a breakdown (quality/cost/latency/health/quota/deadline) that answers "why A over B";
+- Hard constraints filter before scoring: cost cap / quota exhausted / cooldown / deadline infeasible / health red-line / capability bounds (latency / quality tier / capability percentage); image/vision tasks enforce vision capability;
+- Dashboard (taskserver): Opportunistic Scheduling panel + A2A endpoints (submit / query / fetch result), pure stdlib, no external resources;
+- Benchmark tool (v0.6+): reproducible task sets comparing utility vs role chains vs round-robin (success rate / cost / P95 / fallback rate);
+- Parameterized state directory: `LLM_ROUTER_STATE_DIR` env var, `configure_state_dir()`, or constructor `state_dir`;
+- Zero I/O side effects on import: state files are created on first read/write;
+- Thread-safe quota recording (`threading.Lock`); SQLite backend supports cross-process atomic read-modify-write;
 - Atomic JSON writes (`tmp` + `fsync` + `os.replace`);
-- Injectable `now` / `quota_snapshot` so decision tests never touch real state files.
+- Injectable `now` / `quota_snapshot`: decisions are testable without real state files.
 
 ## Quick start
 
@@ -394,10 +465,25 @@ python -m pytest tests -q
 
 ## Roadmap
 
-- Frontend panel: visualize profile editing, quota status, routing decision logs;
-- Scheduled global switching: switch the default model automatically by `schedule` rules;
-- OpenAI-compatible middleware: an API-gateway plugin that picks the model before forwarding requests;
+**Completed (v0.3 → v0.6.2)**:
+
+- ✅ v0.3 Task system: Task state machine + TaskStore + Executor abstraction + error classification (400/401/403 no cooldown / 429/5xx/transport classified)
+- ✅ v0.3 Dashboard: Opportunistic Scheduling panel (tasks/schedule rules/profiles/tester), pure stdlib, no external resources
+- ✅ v0.4 Utility scoring: six dimensions + min-max normalization + configurable weights + explainable breakdown
+- ✅ v0.4 Hard constraints: cost / quota / cooldown / deadline / health red-line + capability bounds (latency/quality tier/capability percentage)
+- ✅ v0.4 ProviderHealth: sliding-window health profile (success_rate / p50 / p95)
+- ✅ v0.5 Policy Compiler: natural-language intents → hard constraints + weights (Chinese/English rule templates, no NLP)
+- ✅ v0.5 A2A endpoints: submit task / query task / fetch result
+- ✅ v0.6 StateStore: Json / SQLite backends (SQLite BEGIN IMMEDIATE cross-process atomic)
+- ✅ v0.6 Benchmark: reproducible task sets comparing utility vs role chains vs round-robin
+- ✅ v0.6.2 Capability check: image/vision tasks enforce vision capability (text-only models get quality_fit=0)
+
+**Future directions**:
+
+- RedisStateStore backend (shared state across instances);
 - Multi-tenancy: isolate state dirs and profile overrides per tenant;
+- OpenAI-compatible middleware: an API-gateway plugin that picks the model before forwarding requests;
+- Access-layer task_type classification: LLM Judge (free fast model) + multi-feature local classifier fallback (text length/attachments/code blocks/tools/context/history/session state), smart even without an LLM;
 - Versioned manual-override markers: version the "user manually picked a model" marker so stale markers from older versions can't poison new policies.
 
 ## License

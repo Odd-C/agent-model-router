@@ -2,11 +2,11 @@
 
 [English](README.en.md) | [中文](README.md)
 
-**MIT License** · **Python 3.10+** · **Zero Dependencies** · **88 tests passing**
+**MIT License** · **Python 3.10+** · **Zero Dependencies** · **279 tests passing**
 
 ---
 
-model-scheduler 是一个**智能模型调度器**：模型画像 + 免费额度跟踪 + 路由决策三件事，拆成零第三方依赖的纯 Python 标准库组件，任何 OpenAI 兼容 API 调用方都可以接入。
+model-scheduler 是一个**智能模型调度器**：模型画像 + 免费额度跟踪 + 路由决策 + 任务调度，拆成零第三方依赖的纯 Python 标准库组件，任何 OpenAI 兼容 API 调用方都可以接入。从「哪个模型还能用」到「哪个模型最划算」——Utility 评分制、硬约束、Policy Compiler 自然语言意图、任务系统与看板一应俱全。
 
 ## 为什么做这个库
 
@@ -64,6 +64,71 @@ model-scheduler 是一个**智能模型调度器**：模型画像 + 免费额度
 
 换模型 = 改画像表 `role` 字段，**不用改路由代码**。
 
+> **v0.4+ 升级路径**：role 链是 v0.2 的默认决策方式。v0.4 起提供 **Utility 评分制**（`route_with_utility`），在候选集中做六分项归一化加权评分（质量/成本/延迟/健康/额度/截止），并支持 HardConstraints 硬约束先砍后评。Benchmark 实测：utility 评分相比 role 链省 ~69% 成本、延迟低 43%。新接入建议直接用评分制，role 链保留向后兼容。
+
+### Utility 评分制（v0.4+）
+
+```python
+from model_scheduler.utility import route_with_utility, HardConstraints
+from model_scheduler.policy import list_models
+
+result = route_with_utility(
+    {"task_type": "coding", "priority": "high", "deadline": None},
+    list_models(),
+    constraints=HardConstraints(cost_max="free"),   # 先砍后评
+)
+# → {model, provider, score, breakdown: {quality_fit, cost_penalty, ...}, why}
+```
+
+- 六分项：quality_fit / cost_penalty / latency_penalty / failure_risk / quota_pressure / deadline_pressure
+- 候选集内 min-max 归一化后再乘权重（权重相等 ≠ 影响相等）
+- breakdown 三层（raw / normalized / weighted）可解释「为什么选 A 不选 B」
+- 能力硬约束：`max_latency_ms` / `min_quality_tier` / `min_capability_pct`（速度/质量/延迟特化场景）；image/vision 任务强制视觉能力校验（文本模型 quality_fit=0）
+
+### Policy Compiler（v0.5+，自然语言意图）
+
+```python
+from model_scheduler.policy_compiler import compile_intent, route_with_intent
+
+cp = compile_intent("要便宜点的")
+# → CompiledPolicy{constraints: {cost_max: "free"}, weights: {cost_penalty: 3.0}, mode: "cost-first", explanation}
+
+result = route_with_intent(
+    {"task_type": "coding", "priority": "high", "deadline": None},
+    list_models(),
+    "高质量但不要太贵",   # 自然语言 → 硬约束并集 + 质量权重
+)
+```
+
+中英文关键词规则匹配（无需 NLP）：速度（尽快/3秒→latency-first+max_latency_ms）、成本（便宜/免费→cost-first+cost_max=free）、质量（高质量/旗舰→quality-first+min_quality_tier）、能力百分比（"达到 gpt-4o 的 80%"→pct+reference）、无匹配回退 balanced。
+
+### 任务系统（v0.3+）
+
+任务 model（task_id / task_type / priority / deadline / defer_until / status / payload）+ 状态机 + TaskStore 持久化：
+
+```python
+from model_scheduler.task import TaskStore, Task
+from model_scheduler.scheduler import TaskScheduler
+from model_scheduler.executor import MockExecutor
+
+store = TaskStore(state_dir, backend="sqlite")   # json / sqlite 双后端
+scheduler = TaskScheduler(store, MockExecutor())
+task = scheduler.submit("text", {}, priority="high", deadline=1_800_000_000)
+scheduler.tick(now=1_800_000_100)                # 处理 queued/deferred
+```
+
+- 状态机：queued → running → done/failed；deferred 按 defer_until 转 queued；过期 → expired
+- 降级矩阵：错误分类（429→冷却重试 / 5xx→切换候选 / 400-403→不重试）写入 `last_error.action_taken`
+- ProviderHealth：滑动窗口健康档案（success_rate / p50 / p95 / failure_risk）
+
+### 看板（taskserver，v0.3+）
+
+```bash
+PYTHONPATH=src python -m model_scheduler.taskserver --port 8099
+```
+
+Opportunistic Scheduling 看板：任务列表/提交/手动 tick/偏好四档/模型画像/A2A 端点（提交任务/查询/取结果）。纯 stdlib，无 CDN/外部资源。
+
 ### 峰谷时段
 
 - 高峰：北京时间 9:00-12:00、14:00-18:00（含边界，**默认**）
@@ -87,9 +152,15 @@ model-scheduler 是一个**智能模型调度器**：模型画像 + 免费额度
 ## 特性
 
 - 纯 Python 标准库，零第三方运行时依赖；
+- 路由决策三档可选：role 链（v0.2）/ Utility 评分制（v0.4+）/ Policy Compiler 自然语言意图（v0.5+）；
+- 任务系统（v0.3+）：Task 状态机 + TaskStore 持久化（Json / SQLite 双后端，SQLite 跨进程原子）+ 降级矩阵 + ProviderHealth；
+- 可解释决策：Utility 评分返回 breakdown 分项（质量/成本/延迟/健康/额度/截止），能回答「为什么选 A 不选 B」；
+- 硬约束先砍后评：cost 上限 / quota 耗尽 / cooldown / deadline 不可行 / health 红线 / 能力上下限（延迟/质量档/能力百分比），image/vision 任务强制视觉能力校验；
+- 看板（taskserver）：Opportunistic Scheduling 面板 + A2A 三端点（提交任务/查询/取结果），纯 stdlib 无外部资源；
+- Benchmark 工具（v0.6+）：可复现任务集对比 utility vs role 链 vs round-robin（成功率/成本/P95/fallback rate）；
 - state 目录可参数化：支持 `LLM_ROUTER_STATE_DIR` 环境变量、`configure_state_dir()`、构造函数 `state_dir` 参数；
 - import 时零 I/O 副作用：首次读写 state 文件时才创建目录；
-- 线程安全额度记录（`threading.Lock`）；
+- 线程安全额度记录（`threading.Lock`）；SQLite 后端支持跨进程原子读改写；
 - 原子写 JSON（`tmp` + `fsync` + `os.replace`）；
 - 可注入 `now` / `quota_snapshot`，决策测试不依赖真实状态文件。
 
@@ -390,10 +461,25 @@ python -m pytest tests -q
 
 ## Roadmap
 
-- 前端面板接入：可视化画像表编辑、额度状态、路由决策日志；
-- 定时全局切换：按 schedule 规则自动切换默认模型；
-- OpenAI 兼容中间件：作为 API 网关插件，在请求转发前自动选择模型；
+**已完成（v0.3 → v0.6.2）**：
+
+- ✅ v0.3 任务系统：Task 状态机 + TaskStore + Executor 抽象 + 错误分类（400/401/403 不冷却 / 429/5xx/transport 分类）
+- ✅ v0.3 看板：Opportunistic Scheduling 面板（任务/调度规则/画像/试算器），纯 stdlib 无外部资源
+- ✅ v0.4 Utility 评分：六分项 + min-max 归一化 + 权重配置化 + breakdown 可解释
+- ✅ v0.4 硬约束：cost / quota / cooldown / deadline / health 红线 + 能力上下限（延迟/质量档/能力百分比）
+- ✅ v0.4 ProviderHealth：滑动窗口健康档案（success_rate / p50 / p95）
+- ✅ v0.5 Policy Compiler：自然语言意图 → 硬约束+权重（中英文规则模板，无 NLP）
+- ✅ v0.5 A2A 三端点：提交任务 / 查询任务 / 获取结果
+- ✅ v0.6 StateStore：Json / SQLite 双后端（SQLite BEGIN IMMEDIATE 跨进程原子）
+- ✅ v0.6 Benchmark：可复现任务集对比 utility vs role 链 vs round-robin
+- ✅ v0.6.2 能力校验：image/vision 任务强制视觉能力（文本模型 quality_fit=0）
+
+**后续方向**：
+
+- RedisStateStore 后端（多实例共享状态）；
 - 多租户：按租户隔离 state 目录与画像覆盖；
+- OpenAI 兼容中间件：作为 API 网关插件，在请求转发前自动选择模型；
+- 接入层 task_type 判定：LLM Judge（免费快速模型）+ 多特征本地分类器兜底（文本长度/附件/代码块/工具/上下文/历史/会话状态），无 LLM 也较智能；
 - 版本化手动标记：将「用户手动选择模型」的标记策略版本化，避免旧版本残留标记误伤新策略。
 
 ## License
