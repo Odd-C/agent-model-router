@@ -91,6 +91,17 @@ model-scheduler 把决策固化进一个纯标准库组件：模型画像可 JSO
 
 Opportunistic Scheduling 单页：任务列表/提交/手动 tick/偏好四档/模型画像/推荐试算器 + A2A 三端点（提交/查询/取结果）。纯 stdlib，无 CDN/外部资源。
 
+### 任务理解层（task_type 判定：库 vs 接入层）
+
+**本库是零依赖纯标准库**，不内置任何 LLM 调用。任务理解分成两层：
+
+| 层 | 职责 | 实现 |
+|---|---|---|
+| **调用方（接入层）** | 把任务描述 → `task_type`（coding / image / text / batch / maintenance） | 接入层自行实现；推荐链路：LLM Judge（免费快速模型，OpenAI 兼容可插拔）→ 多特征本地分类器（文本长度/附件/代码块/工具/上下文/历史/会话状态）→ 关键词白名单 → text；无 LLM 也能较智能（WebUI 接入层有参考实现） |
+| **本库** | 接收 `task_type`，做质量匹配/评分 | `task_type_tier_expectation(task_type)` 决定期望 tier，`quality_fit` 计算匹配度；image/vision 任务强制视觉能力校验 |
+
+本库不猜任务类型——`task_type` 由调用方显式传入或由接入层推断。v0.2 的 `assess_difficulty(text)`（0-5 难度分）是兼容层，proxy 内部使用，新项目不需要。
+
 ## 快速开始
 
 ### 安装

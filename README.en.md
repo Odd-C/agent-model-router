@@ -91,6 +91,17 @@ Keyword-rule matching in Chinese and English (no NLP): speed ("尽快"/"3秒" �
 
 Opportunistic Scheduling single page: task list / submit / manual tick / four preference modes / model profiles / recommendation tester + A2A endpoints (submit / query / fetch result). Pure stdlib, no CDN or external resources.
 
+### Task understanding (task_type: library vs access layer)
+
+**This library is a zero-dependency pure-stdlib package — it makes no LLM calls itself.** Task understanding is split into two layers:
+
+| Layer | Responsibility | Implementation |
+|---|---|---|
+| **Caller (access layer)** | map task description → `task_type` (coding / image / text / batch / maintenance) | access layer's own; recommended chain: LLM Judge (free fast model, pluggable OpenAI-compatible) → multi-feature local classifier (text length / attachments / code blocks / tools / context / history / session state) → keyword whitelist → text; works smartly even without an LLM (reference implementation in the WebUI access layer) |
+| **This library** | receives `task_type`, does quality matching / scoring | `task_type_tier_expectation(task_type)` decides expected tiers, `quality_fit` computes the match; image/vision tasks enforce vision capability |
+
+The library does not guess the task type — `task_type` is passed explicitly by the caller or inferred by the access layer. v0.2's `assess_difficulty(text)` (0-5 difficulty score) is a compatibility layer used internally by the proxy; new projects don't need it.
+
 ## Quick start
 
 ### Install
