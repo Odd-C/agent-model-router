@@ -489,14 +489,14 @@ python -m pytest tests -q
 - ✅ v0.6 StateStore：Json / SQLite 双后端（SQLite BEGIN IMMEDIATE 跨进程原子）
 - ✅ v0.6 Benchmark：可复现任务集对比 utility vs role 链 vs round-robin
 - ✅ v0.6.2 能力校验：image/vision 任务强制视觉能力（文本模型 quality_fit=0）
+- ✅ 接入层 task_type 判定（v2.1）：LLM Judge（免费快速模型，默认 GLM-4-Flash）+ 多特征本地分类器兜底（文本长度/附件/代码块/工具/上下文/历史/会话状态），无 LLM 也较智能——位于 WebUI 接入层（不在本库，库保持零依赖）
 
 **后续方向**：
 
 - RedisStateStore 后端（多实例共享状态）；
 - 多租户：按租户隔离 state 目录与画像覆盖；
-- OpenAI 兼容中间件：作为 API 网关插件，在请求转发前自动选择模型；
-- 接入层 task_type 判定：LLM Judge（免费快速模型）+ 多特征本地分类器兜底（文本长度/附件/代码块/工具/上下文/历史/会话状态），无 LLM 也较智能；
-- 版本化手动标记：将「用户手动选择模型」的标记策略版本化，避免旧版本残留标记误伤新策略。
+- OpenAI 兼容中间件：作为 API 网关插件形态（现有代理层是独立进程，缺"网关插件"形态）；
+- 版本化手动标记：将「用户手动选择模型」的标记策略版本化（现有标记机制缺通用版本化与旧残留自动清理）。
 
 ## License
 

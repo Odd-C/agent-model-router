@@ -487,14 +487,14 @@ python -m pytest tests -q
 - ✅ v0.6 StateStore: Json / SQLite backends (SQLite BEGIN IMMEDIATE cross-process atomic)
 - ✅ v0.6 Benchmark: reproducible task sets comparing utility vs role chains vs round-robin
 - ✅ v0.6.2 Capability check: image/vision tasks enforce vision capability (text-only models get quality_fit=0)
+- ✅ Access-layer task_type classification (v2.1): LLM Judge (free fast model, default GLM-4-Flash) + multi-feature local classifier fallback (text length/attachments/code blocks/tools/context/history/session state), smart even without an LLM — lives in the WebUI access layer (not in this library; the library stays zero-dependency)
 
 **Future directions**:
 
 - RedisStateStore backend (shared state across instances);
 - Multi-tenancy: isolate state dirs and profile overrides per tenant;
-- OpenAI-compatible middleware: an API-gateway plugin that picks the model before forwarding requests;
-- Access-layer task_type classification: LLM Judge (free fast model) + multi-feature local classifier fallback (text length/attachments/code blocks/tools/context/history/session state), smart even without an LLM;
-- Versioned manual-override markers: version the "user manually picked a model" marker so stale markers from older versions can't poison new policies.
+- OpenAI-compatible middleware as an API-gateway plugin (the current proxy layer is a standalone process; the "gateway plugin" form is not done yet);
+- Versioned manual-override markers (the current marker mechanism lacks generic versioning and automatic stale-marker cleanup).
 
 ## License
 
