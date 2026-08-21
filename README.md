@@ -10,18 +10,6 @@
 
 **One-liner**: from "which model still works" to "which model is most cost-effective".
 
-## Decision module
-
-```text
-route_with_intent(task, models, "make it cheap")
-  → Policy Compiler:  "make it cheap" → {cost_max: "free", cost-first}
-  → hard constraints: quota / cooldown / deadline / health / capability
-  → utility scoring:  quality / cost / latency / health / quota / deadline
-  → recommendation:   {model, provider, score, breakdown, why}
-```
-
-Model profiles are declared in `model-policy.json`; every decision returns a `breakdown` and a `why`.
-
 ## Why this library
 
 Real pain points when integrating multiple model providers:
@@ -34,6 +22,14 @@ Real pain points when integrating multiple model providers:
 agent-model-router bakes decisions into one pure-stdlib component: JSON-overridable model profiles, explainable decisions, traceable degradation, and pluggable by any OpenAI-compatible caller.
 
 ## Core concepts
+
+### Decision options (three)
+
+| Mode | Version | Description |
+|---|---|---|
+| **Utility scoring** | v0.4+ (recommended) | six-dimension normalized scoring + hard constraints first; explainable breakdown |
+| **Policy Compiler** | v0.5+ | natural-language intents → hard constraints + weights |
+| role chain | v0.2 (compat layer) | difficulty tiers → fixed fallback chains |
 
 ### `id@provider` unique key
 
@@ -60,14 +56,6 @@ Model capability/cost/role lives in JSON — **change config, not code**:
 ```
 
 Profile fields: `tier` (S+/S/A/A-/B+/B/C capability grade), `cost` (free/paid), `role` (capability label), `scenarios`, `quota_per_window` (free quota), `peak_hours` (per-model override), `capability` (0-1 score for capability hard constraints).
-
-### Decision options (three)
-
-| Mode | Version | Description |
-|---|---|---|
-| **Utility scoring** | v0.4+ (recommended) | six-dimension normalized scoring + hard constraints first; explainable breakdown |
-| **Policy Compiler** | v0.5+ | natural-language intents → hard constraints + weights |
-| role chain | v0.2 (compat layer) | difficulty tiers → fixed fallback chains |
 
 ### Utility scoring (v0.4+, recommended)
 
@@ -252,7 +240,7 @@ Library uses `id@provider`; UI selectors often use `provider/model`. Convert wit
 
 ### 5. Failure cooldown integration
 
-On upstream failure call `record_failure(model, provider, reason, status)`; the next route skips models in cooldown. Classification: 429/5xx → cooldown; 400/401/403 → no cooldown.
+On upstream failure call `record_failure(model, provider, reason, status)`; the next route skips models in cooldown (classification follows the degradation matrix under *Core concepts → Task system*).
 
 ### 6. Recommendation cache
 

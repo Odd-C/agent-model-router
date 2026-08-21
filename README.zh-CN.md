@@ -10,18 +10,6 @@ agent-model-router 是一个**零第三方依赖的 LLM 调度库**：给「当�
 
 **一句话定位**：从「哪个模型还能用」到「哪个模型最划算」。
 
-## 决策模块
-
-```text
-route_with_intent(task, models, "要便宜点的")
-  → Policy Compiler:  "要便宜点的" → {cost_max: "free", 成本优先}
-  → 硬约束先砍:        quota / cooldown / deadline / health / capability
-  → Utility 评分:      quality / cost / latency / health / quota / deadline
-  → 推荐结果:          {model, provider, score, breakdown, why}
-```
-
-模型画像声明在 `model-policy.json`；每次决策返回 `breakdown` 与 `why`。
-
 ## 为什么做这个库
 
 多模型接入的真实痛点：
@@ -34,6 +22,14 @@ route_with_intent(task, models, "要便宜点的")
 agent-model-router 把决策固化进一个纯标准库组件：模型画像可 JSON 覆盖、决策可解释、降级可追溯，任何 OpenAI 兼容调用方都能接入。
 
 ## 核心概念
+
+### 决策链（三档可选）
+
+| 方式 | 版本 | 说明 |
+|---|---|---|
+| **Utility 评分制** | v0.4+（推荐） | 六维归一化评分 + 硬约束先砍后评，breakdown 可解释 |
+| **Policy Compiler** | v0.5+ | 自然语言意图 → 硬约束 + 权重 |
+| role 链 | v0.2（兼容层） | 难度分档 → 固定 fallback 链 |
 
 ### `id@provider` 唯一键
 
@@ -60,14 +56,6 @@ agent-model-router 把决策固化进一个纯标准库组件：模型画像可 
 ```
 
 画像字段：`tier`（S+/S/A/A-/B+/B/C 能力档）、`cost`（free/paid）、`role`（能力标签）、`scenarios`（适用场景）、`quota_per_window`（免费额度）、`peak_hours`（per-model 峰谷覆盖）、`capability`（0-1 能力分，能力硬约束用）。
-
-### 决策链（三档可选）
-
-| 方式 | 版本 | 说明 |
-|---|---|---|
-| **Utility 评分制** | v0.4+（推荐） | 六维归一化评分 + 硬约束先砍后评，breakdown 可解释 |
-| **Policy Compiler** | v0.5+ | 自然语言意图 → 硬约束 + 权重 |
-| role 链 | v0.2（兼容层） | 难度分档 → 固定 fallback 链 |
 
 ### Utility 评分制（v0.4+，推荐）
 
@@ -252,7 +240,7 @@ def _load_lib():
 
 ### 5. 失败冷却链路
 
-上游失败时调 `record_failure(model, provider, reason, status)`；下一次路由自动绕过冷却中的模型。错误分类：429/5xx 进冷却，400/401/403 不冷却。
+上游失败时调 `record_failure(model, provider, reason, status)`；下一次路由自动绕过冷却中的模型（错误分类见 *核心概念 → 任务系统* 的降级矩阵）。
 
 ### 6. 推荐缓存
 
