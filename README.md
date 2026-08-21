@@ -282,7 +282,7 @@ MODEL_SCHEDULER_SMOKE_BASE_URL=... MODEL_SCHEDULER_SMOKE_API_KEY=... MODEL_SCHED
 
 ## 版本历史
 
-见 [RELEASES.md](docs/RELEASES.md)。API 契约见 [API.md](docs/API.md)。
+见 [CHANGELOG.md](CHANGELOG.md)（详细变更）与 [RELEASES.md](docs/RELEASES.md)（发布说明）。API 契约见 [API.md](docs/API.md)。
 
 ## License
 

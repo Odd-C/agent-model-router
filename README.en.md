@@ -282,7 +282,7 @@ MODEL_SCHEDULER_SMOKE_BASE_URL=... MODEL_SCHEDULER_SMOKE_API_KEY=... MODEL_SCHED
 
 ## Version history
 
-See [RELEASES.md](docs/RELEASES.md). API contract: [API.md](docs/API.md).
+See [CHANGELOG.md](CHANGELOG.md) (detailed changes) and [RELEASES.md](docs/RELEASES.md) (release notes). API contract: [API.md](docs/API.md).
 
 ## License
 
